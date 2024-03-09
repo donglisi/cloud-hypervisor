@@ -278,6 +278,9 @@ impl SerialManager {
         // why we can afford to block until an actual event is triggered.
         let timeout = if pty_write_out.is_some() { 500 } else { -1 };
 
+        let mut term_got_escape : bool;
+        term_got_escape = false;
+
         let thread = thread::Builder::new()
             .name("serial-manager".to_string())
             .spawn(move || {
@@ -387,6 +390,35 @@ impl SerialManager {
                                         // Replace "\n" with "\r" to deal with Windows SAC (#1170)
                                         if count == 1 && input[0] == 0x0a {
                                             input[0] = 0x0d;
+                                        }
+
+                                        if count == 1 {
+                                            if term_got_escape {
+                                                term_got_escape = false;
+                                                if input[0] == 0x78 {
+                                                    unsafe {libc::kill(std::process::id() as i32, libc::SIGTERM);}
+                                                }
+                                                if input[0] == 0x1 {
+                                                    serial
+                                                        .as_ref()
+                                                        .lock()
+                                                        .unwrap()
+                                                        .queue_input_bytes(&input[..count])
+                                                        .map_err(Error::QueueInput)?;
+                                                    break;
+                                                }
+                                            }
+                                            if input[0] == 0x1 {
+                                                term_got_escape = true;
+                                                break;
+                                            }
+                                            serial
+                                                .as_ref()
+                                                .lock()
+                                                .unwrap()
+                                                .queue_input_bytes(&input[..count])
+                                                .map_err(Error::QueueInput)?;
+                                            break;
                                         }
 
                                         serial
