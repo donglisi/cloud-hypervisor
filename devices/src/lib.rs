@@ -24,7 +24,6 @@ pub mod interrupt_controller;
 pub mod ioapic;
 pub mod legacy;
 pub mod pvpanic;
-pub mod tpm;
 
 pub use self::acpi::{AcpiGedDevice, AcpiPmTimerDevice, AcpiShutdownDevice};
 pub use self::pvpanic::{PvPanicDevice, PVPANIC_DEVICE_MMIO_SIZE};

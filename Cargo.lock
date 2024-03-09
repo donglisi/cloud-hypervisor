@@ -459,7 +459,6 @@ dependencies = [
  "signal-hook",
  "test_infra",
  "thiserror",
- "tpm",
  "tracer",
  "vm-memory",
  "vmm",
@@ -599,7 +598,6 @@ dependencies = [
  "log",
  "pci",
  "thiserror",
- "tpm",
  "versionize",
  "versionize_derive",
  "vm-allocator",
@@ -2197,19 +2195,6 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "winnow",
-]
-
-[[package]]
-name = "tpm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "byteorder",
- "libc",
- "log",
- "net_gen",
- "thiserror",
- "vmm-sys-util",
 ]
 
 [[package]]
