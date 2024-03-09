@@ -11,7 +11,7 @@
 
 use crate::config::{
     ConsoleOutputMode, DiskConfig, NetConfig, PmemConfig,
-    VdpaConfig, VmConfig, VsockConfig,
+    VmConfig, VsockConfig,
 };
 use crate::cpu::{CpuManager, CPU_MANAGER_ACPI_SIZE};
 use crate::device_tree::{DeviceNode, DeviceTree};
@@ -77,7 +77,7 @@ use tracer::trace_scoped;
 use virtio_devices::transport::VirtioTransport;
 use virtio_devices::transport::{VirtioPciDevice, VirtioPciDeviceActivator};
 use virtio_devices::{
-    AccessPlatformMapping, ActivateError, VdpaDmaMapping, VirtioMemMappingSource,
+    AccessPlatformMapping, ActivateError, VirtioMemMappingSource,
 };
 use virtio_devices::{Endpoint, IommuMapping};
 use vm_allocator::{AddressAllocator, SystemAllocator};
@@ -123,7 +123,6 @@ const PVPANIC_DEVICE_NAME: &str = "__pvpanic";
 const DISK_DEVICE_NAME_PREFIX: &str = "_disk";
 const NET_DEVICE_NAME_PREFIX: &str = "_net";
 const PMEM_DEVICE_NAME_PREFIX: &str = "_pmem";
-const VDPA_DEVICE_NAME_PREFIX: &str = "_vdpa";
 const VSOCK_DEVICE_NAME_PREFIX: &str = "_vsock";
 const WATCHDOG_DEVICE_NAME: &str = "__watchdog";
 const VIRTIO_PCI_DEVICE_NAME_PREFIX: &str = "_virtio-pci";
@@ -154,9 +153,6 @@ pub enum DeviceManagerError {
 
     /// Cannot create virtio-pmem device
     CreateVirtioPmem(io::Error),
-
-    /// Cannot create vDPA device
-    CreateVdpa(virtio_devices::vdpa::Error),
 
     /// Cannot create virtio-vsock device
     CreateVirtioVsock(io::Error),
@@ -2213,9 +2209,6 @@ impl DeviceManager {
         // Add virtio-watchdog device
         devices.append(&mut self.make_virtio_watchdog_devices()?);
 
-        // Add vDPA devices if required
-        devices.append(&mut self.make_vdpa_devices()?);
-
         Ok(devices)
     }
 
@@ -3026,71 +3019,6 @@ impl DeviceManager {
         Ok(devices)
     }
 
-    fn make_vdpa_device(
-        &mut self,
-        vdpa_cfg: &mut VdpaConfig,
-    ) -> DeviceManagerResult<MetaVirtioDevice> {
-        let id = if let Some(id) = &vdpa_cfg.id {
-            id.clone()
-        } else {
-            let id = self.next_device_name(VDPA_DEVICE_NAME_PREFIX)?;
-            vdpa_cfg.id = Some(id.clone());
-            id
-        };
-
-        info!("Creating vDPA device: {:?}", vdpa_cfg);
-
-        let device_path = vdpa_cfg
-            .path
-            .to_str()
-            .ok_or(DeviceManagerError::CreateVdpaConvertPath)?;
-
-        let vdpa_device = Arc::new(Mutex::new(
-            virtio_devices::Vdpa::new(
-                id.clone(),
-                device_path,
-                self.memory_manager.lock().unwrap().guest_memory(),
-                vdpa_cfg.num_queues as u16,
-                versioned_state_from_id(self.snapshot.as_ref(), id.as_str())
-                    .map_err(DeviceManagerError::RestoreGetState)?,
-            )
-            .map_err(DeviceManagerError::CreateVdpa)?,
-        ));
-
-        // Create the DMA handler that is required by the vDPA device
-        let vdpa_mapping = Arc::new(VdpaDmaMapping::new(
-            Arc::clone(&vdpa_device),
-            Arc::new(self.memory_manager.lock().unwrap().guest_memory()),
-        ));
-
-        self.device_tree
-            .lock()
-            .unwrap()
-            .insert(id.clone(), device_node!(id, vdpa_device));
-
-        Ok(MetaVirtioDevice {
-            virtio_device: vdpa_device as Arc<Mutex<dyn virtio_devices::VirtioDevice>>,
-            iommu: vdpa_cfg.iommu,
-            id,
-            pci_segment: vdpa_cfg.pci_segment,
-            dma_handler: Some(vdpa_mapping),
-        })
-    }
-
-    fn make_vdpa_devices(&mut self) -> DeviceManagerResult<Vec<MetaVirtioDevice>> {
-        let mut devices = Vec::new();
-        // Add vdpa if required
-        let mut vdpa_devices = self.config.lock().unwrap().vdpa.clone();
-        if let Some(vdpa_list_cfg) = &mut vdpa_devices {
-            for vdpa_cfg in vdpa_list_cfg.iter_mut() {
-                devices.push(self.make_vdpa_device(vdpa_cfg)?);
-            }
-        }
-        self.config.lock().unwrap().vdpa = vdpa_devices;
-
-        Ok(devices)
-    }
-
     fn next_device_name(&mut self, prefix: &str) -> DeviceManagerResult<String> {
         let start_id = self.device_id_cnt;
         loop {
@@ -3766,17 +3694,6 @@ impl DeviceManager {
         }
 
         let device = self.make_virtio_net_device(net_cfg)?;
-        self.hotplug_virtio_pci_device(device)
-    }
-
-    pub fn add_vdpa(&mut self, vdpa_cfg: &mut VdpaConfig) -> DeviceManagerResult<PciDeviceInfo> {
-        self.validate_identifier(&vdpa_cfg.id)?;
-
-        if vdpa_cfg.iommu && !self.is_iommu_segment(vdpa_cfg.pci_segment) {
-            return Err(DeviceManagerError::InvalidIommuHotplug);
-        }
-
-        let device = self.make_vdpa_device(vdpa_cfg)?;
         self.hotplug_virtio_pci_device(device)
     }
 

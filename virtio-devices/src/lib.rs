@@ -34,7 +34,6 @@ mod rng;
 pub mod seccomp_filters;
 mod thread_helper;
 pub mod transport;
-pub mod vdpa;
 pub mod vsock;
 pub mod watchdog;
 
@@ -53,7 +52,6 @@ pub use self::mem::{BlocksState, Mem, VirtioMemMappingSource, VIRTIO_MEM_ALIGN_S
 pub use self::net::{Net, NetCtrlEpollHandler};
 pub use self::pmem::Pmem;
 pub use self::rng::Rng;
-pub use self::vdpa::{Vdpa, VdpaDmaMapping};
 pub use self::vsock::Vsock;
 pub use self::watchdog::Watchdog;
 use vm_memory::{bitmap::AtomicBitmap, GuestAddress, GuestMemory};
@@ -89,8 +87,6 @@ pub enum ActivateError {
     CreateSeccompFilter(seccompiler::Error),
     #[error("Failed to create rate limiter: {0}")]
     CreateRateLimiter(std::io::Error),
-    #[error("Failed to activate the vDPA device: {0}")]
-    ActivateVdpa(vdpa::Error),
 }
 
 pub type ActivateResult = std::result::Result<(), ActivateError>;

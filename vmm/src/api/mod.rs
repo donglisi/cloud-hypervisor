@@ -40,7 +40,7 @@ pub use self::http::start_http_path_thread;
 
 use crate::config::{
     DiskConfig, NetConfig, PmemConfig, RestoreConfig,
-    VdpaConfig, VmConfig, VsockConfig,
+    VmConfig, VsockConfig,
 };
 use crate::device_tree::DeviceTree;
 use crate::vm::{Error as VmError, VmState};
@@ -327,8 +327,6 @@ pub trait RequestHandler {
 
     fn vm_add_net(&mut self, net_cfg: NetConfig) -> Result<Option<Vec<u8>>, VmError>;
 
-    fn vm_add_vdpa(&mut self, vdpa_cfg: VdpaConfig) -> Result<Option<Vec<u8>>, VmError>;
-
     fn vm_add_vsock(&mut self, vsock_cfg: VsockConfig) -> Result<Option<Vec<u8>>, VmError>;
 
     fn vm_counters(&mut self) -> Result<Option<Vec<u8>>, VmError>;
@@ -500,43 +498,6 @@ impl ApiAction for VmAddNet {
             let response = vmm
                 .vm_add_net(config)
                 .map_err(ApiError::VmAddNet)
-                .map(ApiResponsePayload::VmAction);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
-
-pub struct VmAddVdpa;
-
-impl ApiAction for VmAddVdpa {
-    type RequestBody = VdpaConfig;
-    type ResponseBody = Option<Body>;
-
-    fn request(
-        &self,
-        config: Self::RequestBody,
-        response_sender: Sender<ApiResponse>,
-    ) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmAddVdpa {:?}", config);
-
-            let response = vmm
-                .vm_add_vdpa(config)
-                .map_err(ApiError::VmAddVdpa)
                 .map(ApiResponsePayload::VmAction);
 
             response_sender

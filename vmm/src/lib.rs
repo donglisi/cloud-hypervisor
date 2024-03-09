@@ -14,7 +14,7 @@ use crate::api::{
 };
 use crate::config::{
     add_to_config, DiskConfig, NetConfig, PmemConfig, RestoreConfig,
-    VdpaConfig, VmConfig, VsockConfig,
+    VmConfig, VsockConfig,
 };
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::coredump::GuestDebuggable;
@@ -1672,32 +1672,6 @@ impl RequestHandler for Vmm {
         }
     }
 
-    fn vm_add_vdpa(&mut self, vdpa_cfg: VdpaConfig) -> result::Result<Option<Vec<u8>>, VmError> {
-        self.vm_config.as_ref().ok_or(VmError::VmNotCreated)?;
-
-        {
-            // Validate the configuration change in a cloned configuration
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap().clone();
-            add_to_config(&mut config.vdpa, vdpa_cfg.clone());
-            config.validate().map_err(VmError::ConfigValidation)?;
-        }
-
-        if let Some(ref mut vm) = self.vm {
-            let info = vm.add_vdpa(vdpa_cfg).map_err(|e| {
-                error!("Error when adding new vDPA device to the VM: {:?}", e);
-                e
-            })?;
-            serde_json::to_vec(&info)
-                .map(Some)
-                .map_err(VmError::SerializeJson)
-        } else {
-            // Update VmConfig by adding the new device.
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap();
-            add_to_config(&mut config.vdpa, vdpa_cfg);
-            Ok(None)
-        }
-    }
-
     fn vm_add_vsock(&mut self, vsock_cfg: VsockConfig) -> result::Result<Option<Vec<u8>>, VmError> {
         self.vm_config.as_ref().ok_or(VmError::VmNotCreated)?;
 
@@ -2199,54 +2173,6 @@ mod unit_tests {
                 .clone()
                 .unwrap()[0],
             net_config
-        );
-    }
-
-    #[test]
-    fn test_vmm_vm_cold_add_vdpa() {
-        let mut vmm = create_dummy_vmm();
-        let vdpa_config = VdpaConfig::parse("path=/dev/vhost-vdpa,num_queues=2").unwrap();
-
-        assert!(matches!(
-            vmm.vm_add_vdpa(vdpa_config.clone()),
-            Err(VmError::VmNotCreated)
-        ));
-
-        let _ = vmm.vm_create(create_dummy_vm_config());
-        assert!(vmm
-            .vm_config
-            .as_ref()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .vdpa
-            .is_none());
-
-        let result = vmm.vm_add_vdpa(vdpa_config.clone());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-        assert_eq!(
-            vmm.vm_config
-                .as_ref()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .vdpa
-                .clone()
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            vmm.vm_config
-                .as_ref()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .vdpa
-                .clone()
-                .unwrap()[0],
-            vdpa_config
         );
     }
 
