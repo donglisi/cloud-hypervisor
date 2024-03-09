@@ -39,7 +39,7 @@ pub use self::http::start_http_fd_thread;
 pub use self::http::start_http_path_thread;
 
 use crate::config::{
-    DeviceConfig, DiskConfig, NetConfig, PmemConfig, RestoreConfig, UserDeviceConfig,
+    DiskConfig, NetConfig, PmemConfig, RestoreConfig,
     VdpaConfig, VmConfig, VsockConfig,
 };
 use crate::device_tree::DeviceTree;
@@ -319,13 +319,6 @@ pub trait RequestHandler {
 
     fn vm_resize_zone(&mut self, id: String, desired_ram: u64) -> Result<(), VmError>;
 
-    fn vm_add_device(&mut self, device_cfg: DeviceConfig) -> Result<Option<Vec<u8>>, VmError>;
-
-    fn vm_add_user_device(
-        &mut self,
-        device_cfg: UserDeviceConfig,
-    ) -> Result<Option<Vec<u8>>, VmError>;
-
     fn vm_remove_device(&mut self, id: String) -> Result<(), VmError>;
 
     fn vm_add_disk(&mut self, disk_cfg: DiskConfig) -> Result<Option<Vec<u8>>, VmError>;
@@ -415,41 +408,6 @@ pub trait ApiAction: Send + Sync {
 }
 
 pub struct VmAddDevice;
-
-impl ApiAction for VmAddDevice {
-    type RequestBody = DeviceConfig;
-    type ResponseBody = Option<Body>;
-
-    fn request(
-        &self,
-        config: Self::RequestBody,
-        response_sender: Sender<ApiResponse>,
-    ) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmAddDevice {:?}", config);
-
-            let response = vmm
-                .vm_add_device(config)
-                .map_err(ApiError::VmAddDevice)
-                .map(ApiResponsePayload::VmAction);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
 
 pub struct AddDisk;
 
@@ -637,41 +595,6 @@ impl ApiAction for VmAddVsock {
 }
 
 pub struct VmAddUserDevice;
-
-impl ApiAction for VmAddUserDevice {
-    type RequestBody = UserDeviceConfig;
-    type ResponseBody = Option<Body>;
-
-    fn request(
-        &self,
-        config: Self::RequestBody,
-        response_sender: Sender<ApiResponse>,
-    ) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmAddUserDevice {:?}", config);
-
-            let response = vmm
-                .vm_add_user_device(config)
-                .map_err(ApiError::VmAddUserDevice)
-                .map(ApiResponsePayload::VmAction);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
 
 pub struct VmBoot;
 

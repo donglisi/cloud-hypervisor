@@ -7,7 +7,7 @@ use self::http_endpoint::{VmActionHandler, VmCreate, VmInfo, VmmPing, VmmShutdow
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::api::VmCoredump;
 use crate::api::{
-    AddDisk, ApiError, ApiRequest, VmAddDevice, VmAddNet, VmAddPmem, VmAddUserDevice,
+    AddDisk, ApiError, ApiRequest, VmAddNet, VmAddPmem,
     VmAddVdpa, VmAddVsock, VmBoot, VmCounters, VmDelete, VmPause, VmPowerButton, VmReboot,
     VmReceiveMigration, VmRemoveDevice, VmResize, VmResizeZone, VmRestore, VmResume,
     VmSendMigration, VmShutdown, VmSnapshot,
@@ -160,14 +160,6 @@ pub static HTTP_ROUTES: Lazy<HttpRoutes> = Lazy::new(|| {
         routes: BTreeMap::new(),
     };
 
-    r.routes.insert(
-        endpoint!("/vm.add-device"),
-        Box::new(VmActionHandler::new(&VmAddDevice)),
-    );
-    r.routes.insert(
-        endpoint!("/vm.add-user-device"),
-        Box::new(VmActionHandler::new(&VmAddUserDevice)),
-    );
     r.routes.insert(
         endpoint!("/vm.add-disk"),
         Box::new(VmActionHandler::new(&AddDisk)),

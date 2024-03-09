@@ -13,8 +13,8 @@ use crate::api::{
     VmSendMigrationData, VmmPingResponse,
 };
 use crate::config::{
-    add_to_config, DeviceConfig, DiskConfig, NetConfig, PmemConfig, RestoreConfig,
-    UserDeviceConfig, VdpaConfig, VmConfig, VsockConfig,
+    add_to_config, DiskConfig, NetConfig, PmemConfig, RestoreConfig,
+    VdpaConfig, VmConfig, VsockConfig,
 };
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::coredump::GuestDebuggable;
@@ -1574,64 +1574,6 @@ impl RequestHandler for Vmm {
         }
     }
 
-    fn vm_add_device(
-        &mut self,
-        device_cfg: DeviceConfig,
-    ) -> result::Result<Option<Vec<u8>>, VmError> {
-        self.vm_config.as_ref().ok_or(VmError::VmNotCreated)?;
-
-        {
-            // Validate the configuration change in a cloned configuration
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap().clone();
-            add_to_config(&mut config.devices, device_cfg.clone());
-            config.validate().map_err(VmError::ConfigValidation)?;
-        }
-
-        if let Some(ref mut vm) = self.vm {
-            let info = vm.add_device(device_cfg).map_err(|e| {
-                error!("Error when adding new device to the VM: {:?}", e);
-                e
-            })?;
-            serde_json::to_vec(&info)
-                .map(Some)
-                .map_err(VmError::SerializeJson)
-        } else {
-            // Update VmConfig by adding the new device.
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap();
-            add_to_config(&mut config.devices, device_cfg);
-            Ok(None)
-        }
-    }
-
-    fn vm_add_user_device(
-        &mut self,
-        device_cfg: UserDeviceConfig,
-    ) -> result::Result<Option<Vec<u8>>, VmError> {
-        self.vm_config.as_ref().ok_or(VmError::VmNotCreated)?;
-
-        {
-            // Validate the configuration change in a cloned configuration
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap().clone();
-            add_to_config(&mut config.user_devices, device_cfg.clone());
-            config.validate().map_err(VmError::ConfigValidation)?;
-        }
-
-        if let Some(ref mut vm) = self.vm {
-            let info = vm.add_user_device(device_cfg).map_err(|e| {
-                error!("Error when adding new user device to the VM: {:?}", e);
-                e
-            })?;
-            serde_json::to_vec(&info)
-                .map(Some)
-                .map_err(VmError::SerializeJson)
-        } else {
-            // Update VmConfig by adding the new device.
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap();
-            add_to_config(&mut config.user_devices, device_cfg);
-            Ok(None)
-        }
-    }
-
     fn vm_remove_device(&mut self, id: String) -> result::Result<(), VmError> {
         if let Some(ref mut vm) = self.vm {
             if let Err(e) = vm.remove_device(id) {
@@ -2111,103 +2053,6 @@ mod unit_tests {
             vmm.vm_create(config),
             Err(VmError::VmAlreadyCreated)
         ));
-    }
-
-    #[test]
-    fn test_vmm_vm_cold_add_device() {
-        let mut vmm = create_dummy_vmm();
-        let device_config = DeviceConfig::parse("path=/path/to/device").unwrap();
-
-        assert!(matches!(
-            vmm.vm_add_device(device_config.clone()),
-            Err(VmError::VmNotCreated)
-        ));
-
-        let _ = vmm.vm_create(create_dummy_vm_config());
-        assert!(vmm
-            .vm_config
-            .as_ref()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .devices
-            .is_none());
-
-        let result = vmm.vm_add_device(device_config.clone());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-        assert_eq!(
-            vmm.vm_config
-                .as_ref()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .devices
-                .clone()
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            vmm.vm_config
-                .as_ref()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .devices
-                .clone()
-                .unwrap()[0],
-            device_config
-        );
-    }
-
-    #[test]
-    fn test_vmm_vm_cold_add_user_device() {
-        let mut vmm = create_dummy_vmm();
-        let user_device_config =
-            UserDeviceConfig::parse("socket=/path/to/socket,id=8,pci_segment=2").unwrap();
-
-        assert!(matches!(
-            vmm.vm_add_user_device(user_device_config.clone()),
-            Err(VmError::VmNotCreated)
-        ));
-
-        let _ = vmm.vm_create(create_dummy_vm_config());
-        assert!(vmm
-            .vm_config
-            .as_ref()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .user_devices
-            .is_none());
-
-        let result = vmm.vm_add_user_device(user_device_config.clone());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-        assert_eq!(
-            vmm.vm_config
-                .as_ref()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .user_devices
-                .clone()
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            vmm.vm_config
-                .as_ref()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .user_devices
-                .clone()
-                .unwrap()[0],
-            user_device_config
-        );
     }
 
     #[test]

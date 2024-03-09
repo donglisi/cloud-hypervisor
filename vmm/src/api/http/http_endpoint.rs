@@ -8,7 +8,7 @@ use crate::api::http::{error_response, EndpointHandler, HttpError};
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::api::VmCoredump;
 use crate::api::{
-    AddDisk, ApiAction, ApiRequest, VmAddDevice, VmAddNet, VmAddPmem, VmAddUserDevice,
+    AddDisk, ApiAction, ApiRequest, VmAddNet, VmAddPmem,
     VmAddVdpa, VmAddVsock, VmBoot, VmConfig, VmCounters, VmDelete, VmPause, VmPowerButton,
     VmReboot, VmReceiveMigration, VmRemoveDevice, VmResize, VmResizeZone, VmRestore, VmResume,
     VmSendMigration, VmShutdown, VmSnapshot,
@@ -173,12 +173,10 @@ vm_action_put_handler!(VmPause);
 vm_action_put_handler!(VmResume);
 vm_action_put_handler!(VmPowerButton);
 
-vm_action_put_handler_body!(VmAddDevice);
 vm_action_put_handler_body!(AddDisk);
 vm_action_put_handler_body!(VmAddPmem);
 vm_action_put_handler_body!(VmAddVdpa);
 vm_action_put_handler_body!(VmAddVsock);
-vm_action_put_handler_body!(VmAddUserDevice);
 vm_action_put_handler_body!(VmRemoveDevice);
 vm_action_put_handler_body!(VmResize);
 vm_action_put_handler_body!(VmResizeZone);

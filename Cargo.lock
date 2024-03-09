@@ -1456,9 +1456,6 @@ dependencies = [
  "thiserror",
  "versionize",
  "versionize_derive",
- "vfio-bindings",
- "vfio-ioctls",
- "vfio_user",
  "vm-allocator",
  "vm-device",
  "vm-memory",
@@ -2205,9 +2202,6 @@ dependencies = [
 name = "vfio-bindings"
 version = "0.4.0"
 source = "git+https://github.com/rust-vmm/vfio?branch=main#0daff4d4c159e842cf18b8b90457a45032b2df5a"
-dependencies = [
- "vmm-sys-util",
-]
 
 [[package]]
 name = "vfio-ioctls"
@@ -2221,23 +2215,6 @@ dependencies = [
  "log",
  "mshv-bindings",
  "mshv-ioctls",
- "thiserror",
- "vfio-bindings",
- "vm-memory",
- "vmm-sys-util",
-]
-
-[[package]]
-name = "vfio_user"
-version = "0.1.0"
-source = "git+https://github.com/rust-vmm/vfio-user?branch=main#a1f6e52829e069b6d698b2cfeecac742e4653186"
-dependencies = [
- "bitflags 1.3.2",
- "libc",
- "log",
- "serde",
- "serde_derive",
- "serde_json",
  "thiserror",
  "vfio-bindings",
  "vm-memory",
@@ -2414,8 +2391,6 @@ dependencies = [
  "uuid",
  "versionize",
  "versionize_derive",
- "vfio-ioctls",
- "vfio_user",
  "virtio-devices",
  "virtio-queue",
  "vm-allocator",
