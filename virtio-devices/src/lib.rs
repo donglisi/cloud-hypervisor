@@ -34,7 +34,6 @@ mod rng;
 pub mod seccomp_filters;
 mod thread_helper;
 pub mod transport;
-pub mod vsock;
 pub mod watchdog;
 
 pub use self::balloon::Balloon;
@@ -52,7 +51,6 @@ pub use self::mem::{BlocksState, Mem, VirtioMemMappingSource, VIRTIO_MEM_ALIGN_S
 pub use self::net::{Net, NetCtrlEpollHandler};
 pub use self::pmem::Pmem;
 pub use self::rng::Rng;
-pub use self::vsock::Vsock;
 pub use self::watchdog::Watchdog;
 use vm_memory::{bitmap::AtomicBitmap, GuestAddress, GuestMemory};
 use vm_virtio::VirtioDeviceType;
@@ -71,7 +69,6 @@ const DEVICE_FAILED: u32 = 0x80;
 const VIRTIO_F_RING_INDIRECT_DESC: u32 = 28;
 const VIRTIO_F_VERSION_1: u32 = 32;
 const VIRTIO_F_IOMMU_PLATFORM: u32 = 33;
-const VIRTIO_F_IN_ORDER: u32 = 35;
 #[allow(dead_code)]
 const VIRTIO_F_SR_IOV: u32 = 37;
 

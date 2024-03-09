@@ -11,7 +11,7 @@
 
 use crate::config::{
     ConsoleOutputMode, DiskConfig, NetConfig, PmemConfig,
-    VmConfig, VsockConfig,
+    VmConfig,
 };
 use crate::cpu::{CpuManager, CPU_MANAGER_ACPI_SIZE};
 use crate::device_tree::{DeviceNode, DeviceTree};
@@ -123,7 +123,6 @@ const PVPANIC_DEVICE_NAME: &str = "__pvpanic";
 const DISK_DEVICE_NAME_PREFIX: &str = "_disk";
 const NET_DEVICE_NAME_PREFIX: &str = "_net";
 const PMEM_DEVICE_NAME_PREFIX: &str = "_pmem";
-const VSOCK_DEVICE_NAME_PREFIX: &str = "_vsock";
 const WATCHDOG_DEVICE_NAME: &str = "__watchdog";
 const VIRTIO_PCI_DEVICE_NAME_PREFIX: &str = "_virtio-pci";
 
@@ -154,20 +153,11 @@ pub enum DeviceManagerError {
     /// Cannot create virtio-pmem device
     CreateVirtioPmem(io::Error),
 
-    /// Cannot create virtio-vsock device
-    CreateVirtioVsock(io::Error),
-
     /// Cannot create tpm device
     CreateTpmDevice(anyhow::Error),
 
     /// Failed to convert Path to &str for the vDPA device.
     CreateVdpaConvertPath,
-
-    /// Failed to convert Path to &str for the virtio-vsock device.
-    CreateVsockConvertPath,
-
-    /// Cannot create virtio-vsock backend
-    CreateVsockBackend(virtio_devices::vsock::VsockUnixError),
 
     /// Cannot create virtio-iommu device
     CreateVirtioIommu(io::Error),
@@ -2198,9 +2188,6 @@ impl DeviceManager {
         // Add virtio-pmem if required
         devices.append(&mut self.make_virtio_pmem_devices()?);
 
-        // Add virtio-vsock if required
-        devices.append(&mut self.make_virtio_vsock_devices()?);
-
         devices.append(&mut self.make_virtio_mem_devices()?);
 
         // Add virtio-balloon if required
@@ -2804,75 +2791,6 @@ impl DeviceManager {
             }
         }
         self.config.lock().unwrap().pmem = pmem_devices;
-
-        Ok(devices)
-    }
-
-    fn make_virtio_vsock_device(
-        &mut self,
-        vsock_cfg: &mut VsockConfig,
-    ) -> DeviceManagerResult<MetaVirtioDevice> {
-        let id = if let Some(id) = &vsock_cfg.id {
-            id.clone()
-        } else {
-            let id = self.next_device_name(VSOCK_DEVICE_NAME_PREFIX)?;
-            vsock_cfg.id = Some(id.clone());
-            id
-        };
-
-        info!("Creating virtio-vsock device: {:?}", vsock_cfg);
-
-        let socket_path = vsock_cfg
-            .socket
-            .to_str()
-            .ok_or(DeviceManagerError::CreateVsockConvertPath)?;
-        let backend =
-            virtio_devices::vsock::VsockUnixBackend::new(vsock_cfg.cid, socket_path.to_string())
-                .map_err(DeviceManagerError::CreateVsockBackend)?;
-
-        let vsock_device = Arc::new(Mutex::new(
-            virtio_devices::Vsock::new(
-                id.clone(),
-                vsock_cfg.cid,
-                vsock_cfg.socket.clone(),
-                backend,
-                self.force_iommu | vsock_cfg.iommu,
-                self.seccomp_action.clone(),
-                self.exit_evt
-                    .try_clone()
-                    .map_err(DeviceManagerError::EventFd)?,
-                versioned_state_from_id(self.snapshot.as_ref(), id.as_str())
-                    .map_err(DeviceManagerError::RestoreGetState)?,
-            )
-            .map_err(DeviceManagerError::CreateVirtioVsock)?,
-        ));
-
-        // Fill the device tree with a new node. In case of restore, we
-        // know there is nothing to do, so we can simply override the
-        // existing entry.
-        self.device_tree
-            .lock()
-            .unwrap()
-            .insert(id.clone(), device_node!(id, vsock_device));
-
-        Ok(MetaVirtioDevice {
-            virtio_device: Arc::clone(&vsock_device)
-                as Arc<Mutex<dyn virtio_devices::VirtioDevice>>,
-            iommu: vsock_cfg.iommu,
-            id,
-            pci_segment: vsock_cfg.pci_segment,
-            dma_handler: None,
-        })
-    }
-
-    fn make_virtio_vsock_devices(&mut self) -> DeviceManagerResult<Vec<MetaVirtioDevice>> {
-        let mut devices = Vec::new();
-
-        let mut vsock = self.config.lock().unwrap().vsock.clone();
-        if let Some(ref mut vsock_cfg) = &mut vsock {
-            devices.push(self.make_virtio_vsock_device(vsock_cfg)?);
-        }
-        self.config.lock().unwrap().vsock = vsock;
 
         Ok(devices)
     }
@@ -3694,17 +3612,6 @@ impl DeviceManager {
         }
 
         let device = self.make_virtio_net_device(net_cfg)?;
-        self.hotplug_virtio_pci_device(device)
-    }
-
-    pub fn add_vsock(&mut self, vsock_cfg: &mut VsockConfig) -> DeviceManagerResult<PciDeviceInfo> {
-        self.validate_identifier(&vsock_cfg.id)?;
-
-        if vsock_cfg.iommu && !self.is_iommu_segment(vsock_cfg.pci_segment) {
-            return Err(DeviceManagerError::InvalidIommuHotplug);
-        }
-
-        let device = self.make_virtio_vsock_device(vsock_cfg)?;
         self.hotplug_virtio_pci_device(device)
     }
 

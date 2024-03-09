@@ -13,7 +13,7 @@
 
 use crate::config::{
     add_to_config, DiskConfig, HotplugMethod, NetConfig, PmemConfig,
-    ValidationError, VmConfig, VsockConfig,
+    ValidationError, VmConfig,
 };
 use crate::config::{NumaConfig, PayloadConfig};
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
@@ -1547,30 +1547,6 @@ impl Vm {
         {
             let mut config = self.config.lock().unwrap();
             add_to_config(&mut config.net, net_cfg);
-        }
-
-        self.device_manager
-            .lock()
-            .unwrap()
-            .notify_hotplug(AcpiNotificationFlags::PCI_DEVICES_CHANGED)
-            .map_err(Error::DeviceManager)?;
-
-        Ok(pci_device_info)
-    }
-
-    pub fn add_vsock(&mut self, mut vsock_cfg: VsockConfig) -> Result<PciDeviceInfo> {
-        let pci_device_info = self
-            .device_manager
-            .lock()
-            .unwrap()
-            .add_vsock(&mut vsock_cfg)
-            .map_err(Error::DeviceManager)?;
-
-        // Update VmConfig by adding the new device. This is important to
-        // ensure the device would be created in case of a reboot.
-        {
-            let mut config = self.config.lock().unwrap();
-            config.vsock = Some(vsock_cfg);
         }
 
         self.device_manager

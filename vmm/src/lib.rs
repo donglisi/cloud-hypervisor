@@ -14,7 +14,7 @@ use crate::api::{
 };
 use crate::config::{
     add_to_config, DiskConfig, NetConfig, PmemConfig, RestoreConfig,
-    VmConfig, VsockConfig,
+    VmConfig,
 };
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::coredump::GuestDebuggable;
@@ -1672,37 +1672,6 @@ impl RequestHandler for Vmm {
         }
     }
 
-    fn vm_add_vsock(&mut self, vsock_cfg: VsockConfig) -> result::Result<Option<Vec<u8>>, VmError> {
-        self.vm_config.as_ref().ok_or(VmError::VmNotCreated)?;
-
-        {
-            // Validate the configuration change in a cloned configuration
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap().clone();
-
-            if config.vsock.is_some() {
-                return Err(VmError::TooManyVsockDevices);
-            }
-
-            config.vsock = Some(vsock_cfg.clone());
-            config.validate().map_err(VmError::ConfigValidation)?;
-        }
-
-        if let Some(ref mut vm) = self.vm {
-            let info = vm.add_vsock(vsock_cfg).map_err(|e| {
-                error!("Error when adding new vsock device to the VM: {:?}", e);
-                e
-            })?;
-            serde_json::to_vec(&info)
-                .map(Some)
-                .map_err(VmError::SerializeJson)
-        } else {
-            // Update VmConfig by adding the new device.
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap();
-            config.vsock = Some(vsock_cfg);
-            Ok(None)
-        }
-    }
-
     fn vm_counters(&mut self) -> result::Result<Option<Vec<u8>>, VmError> {
         if let Some(ref mut vm) = self.vm {
             let info = vm.counters().map_err(|e| {
@@ -2173,42 +2142,6 @@ mod unit_tests {
                 .clone()
                 .unwrap()[0],
             net_config
-        );
-    }
-
-    #[test]
-    fn test_vmm_vm_cold_add_vsock() {
-        let mut vmm = create_dummy_vmm();
-        let vsock_config = VsockConfig::parse("socket=/tmp/sock,cid=3,iommu=on").unwrap();
-
-        assert!(matches!(
-            vmm.vm_add_vsock(vsock_config.clone()),
-            Err(VmError::VmNotCreated)
-        ));
-
-        let _ = vmm.vm_create(create_dummy_vm_config());
-        assert!(vmm
-            .vm_config
-            .as_ref()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .vsock
-            .is_none());
-
-        let result = vmm.vm_add_vsock(vsock_config.clone());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-        assert_eq!(
-            vmm.vm_config
-                .as_ref()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .vsock
-                .clone()
-                .unwrap(),
-            vsock_config
         );
     }
 }

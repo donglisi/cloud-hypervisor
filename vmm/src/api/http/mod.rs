@@ -8,7 +8,7 @@ use self::http_endpoint::{VmActionHandler, VmCreate, VmInfo, VmmPing, VmmShutdow
 use crate::api::VmCoredump;
 use crate::api::{
     AddDisk, ApiError, ApiRequest, VmAddNet, VmAddPmem,
-    VmAddVsock, VmBoot, VmCounters, VmDelete, VmPause, VmPowerButton, VmReboot,
+    VmBoot, VmCounters, VmDelete, VmPause, VmPowerButton, VmReboot,
     VmReceiveMigration, VmRemoveDevice, VmResize, VmResizeZone, VmRestore, VmResume,
     VmSendMigration, VmShutdown, VmSnapshot,
 };
@@ -171,10 +171,6 @@ pub static HTTP_ROUTES: Lazy<HttpRoutes> = Lazy::new(|| {
     r.routes.insert(
         endpoint!("/vm.add-pmem"),
         Box::new(VmActionHandler::new(&VmAddPmem)),
-    );
-    r.routes.insert(
-        endpoint!("/vm.add-vsock"),
-        Box::new(VmActionHandler::new(&VmAddVsock)),
     );
     r.routes.insert(
         endpoint!("/vm.boot"),
