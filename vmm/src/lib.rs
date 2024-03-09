@@ -13,7 +13,7 @@ use crate::api::{
     VmSendMigrationData, VmmPingResponse,
 };
 use crate::config::{
-    add_to_config, DeviceConfig, DiskConfig, FsConfig, NetConfig, PmemConfig, RestoreConfig,
+    add_to_config, DeviceConfig, DiskConfig, NetConfig, PmemConfig, RestoreConfig,
     UserDeviceConfig, VdpaConfig, VmConfig, VsockConfig,
 };
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
@@ -1678,32 +1678,6 @@ impl RequestHandler for Vmm {
         }
     }
 
-    fn vm_add_fs(&mut self, fs_cfg: FsConfig) -> result::Result<Option<Vec<u8>>, VmError> {
-        self.vm_config.as_ref().ok_or(VmError::VmNotCreated)?;
-
-        {
-            // Validate the configuration change in a cloned configuration
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap().clone();
-            add_to_config(&mut config.fs, fs_cfg.clone());
-            config.validate().map_err(VmError::ConfigValidation)?;
-        }
-
-        if let Some(ref mut vm) = self.vm {
-            let info = vm.add_fs(fs_cfg).map_err(|e| {
-                error!("Error when adding new fs to the VM: {:?}", e);
-                e
-            })?;
-            serde_json::to_vec(&info)
-                .map(Some)
-                .map_err(VmError::SerializeJson)
-        } else {
-            // Update VmConfig by adding the new device.
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap();
-            add_to_config(&mut config.fs, fs_cfg);
-            Ok(None)
-        }
-    }
-
     fn vm_add_pmem(&mut self, pmem_cfg: PmemConfig) -> result::Result<Option<Vec<u8>>, VmError> {
         self.vm_config.as_ref().ok_or(VmError::VmNotCreated)?;
 
@@ -2281,47 +2255,6 @@ mod unit_tests {
                 .clone()
                 .unwrap()[0],
             disk_config
-        );
-    }
-
-    #[test]
-    fn test_vmm_vm_cold_add_fs() {
-        let mut vmm = create_dummy_vmm();
-        let fs_config = FsConfig::parse("tag=mytag,socket=/tmp/sock").unwrap();
-
-        assert!(matches!(
-            vmm.vm_add_fs(fs_config.clone()),
-            Err(VmError::VmNotCreated)
-        ));
-
-        let _ = vmm.vm_create(create_dummy_vm_config());
-        assert!(vmm.vm_config.as_ref().unwrap().lock().unwrap().fs.is_none());
-
-        let result = vmm.vm_add_fs(fs_config.clone());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-        assert_eq!(
-            vmm.vm_config
-                .as_ref()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .fs
-                .clone()
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            vmm.vm_config
-                .as_ref()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .fs
-                .clone()
-                .unwrap()[0],
-            fs_config
         );
     }
 

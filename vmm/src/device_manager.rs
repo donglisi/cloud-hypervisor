@@ -10,8 +10,8 @@
 //
 
 use crate::config::{
-    ConsoleOutputMode, DeviceConfig, DiskConfig, FsConfig, NetConfig, PmemConfig, UserDeviceConfig,
-    VdpaConfig, VhostMode, VmConfig, VsockConfig,
+    ConsoleOutputMode, DeviceConfig, DiskConfig, NetConfig, PmemConfig, UserDeviceConfig,
+    VdpaConfig, VmConfig, VsockConfig,
 };
 use crate::cpu::{CpuManager, CPU_MANAGER_ACPI_SIZE};
 use crate::device_tree::{DeviceNode, DeviceTree};
@@ -78,7 +78,6 @@ use tracer::trace_scoped;
 use vfio_ioctls::{VfioContainer, VfioDevice, VfioDeviceFd};
 use virtio_devices::transport::VirtioTransport;
 use virtio_devices::transport::{VirtioPciDevice, VirtioPciDeviceActivator};
-use virtio_devices::vhost_user::VhostUserConfig;
 use virtio_devices::{
     AccessPlatformMapping, ActivateError, VdpaDmaMapping, VirtioMemMappingSource,
 };
@@ -125,7 +124,6 @@ const PVPANIC_DEVICE_NAME: &str = "__pvpanic";
 // Devices that the user may name and for which we generate
 // identifiers if the user doesn't give one
 const DISK_DEVICE_NAME_PREFIX: &str = "_disk";
-const FS_DEVICE_NAME_PREFIX: &str = "_fs";
 const NET_DEVICE_NAME_PREFIX: &str = "_net";
 const PMEM_DEVICE_NAME_PREFIX: &str = "_pmem";
 const VDPA_DEVICE_NAME_PREFIX: &str = "_vdpa";
@@ -144,9 +142,6 @@ pub enum DeviceManagerError {
     /// Cannot open disk path
     Disk(io::Error),
 
-    /// Cannot create vhost-user-net device
-    CreateVhostUserNet(virtio_devices::vhost_user::Error),
-
     /// Cannot create virtio-blk device
     CreateVirtioBlock(io::Error),
 
@@ -159,14 +154,8 @@ pub enum DeviceManagerError {
     /// Cannot create virtio-rng device
     CreateVirtioRng(io::Error),
 
-    /// Cannot create virtio-fs device
-    CreateVirtioFs(virtio_devices::vhost_user::Error),
-
     /// Virtio-fs device was created without a socket.
     NoVirtioFsSock,
-
-    /// Cannot create vhost-user-blk device
-    CreateVhostUserBlk(virtio_devices::vhost_user::Error),
 
     /// Cannot create virtio-pmem device
     CreateVirtioPmem(io::Error),
@@ -2272,9 +2261,6 @@ impl DeviceManager {
         devices.append(&mut self.make_virtio_net_devices()?);
         devices.append(&mut self.make_virtio_rng_devices()?);
 
-        // Add virtio-fs if required
-        devices.append(&mut self.make_virtio_fs_devices()?);
-
         // Add virtio-pmem if required
         devices.append(&mut self.make_virtio_pmem_devices()?);
 
@@ -2333,39 +2319,7 @@ impl DeviceManager {
 
         let snapshot = snapshot_from_id(self.snapshot.as_ref(), id.as_str());
 
-        let (virtio_device, migratable_device) = if disk_cfg.vhost_user {
-            let socket = disk_cfg.vhost_socket.as_ref().unwrap().clone();
-            let vu_cfg = VhostUserConfig {
-                socket,
-                num_queues: disk_cfg.num_queues,
-                queue_size: disk_cfg.queue_size,
-            };
-            let vhost_user_block = Arc::new(Mutex::new(
-                match virtio_devices::vhost_user::Blk::new(
-                    id.clone(),
-                    vu_cfg,
-                    self.seccomp_action.clone(),
-                    self.exit_evt
-                        .try_clone()
-                        .map_err(DeviceManagerError::EventFd)?,
-                    self.force_iommu,
-                    snapshot
-                        .map(|s| s.to_versioned_state())
-                        .transpose()
-                        .map_err(DeviceManagerError::RestoreGetState)?,
-                ) {
-                    Ok(vub_device) => vub_device,
-                    Err(e) => {
-                        return Err(DeviceManagerError::CreateVhostUserBlk(e));
-                    }
-                },
-            ));
-
-            (
-                Arc::clone(&vhost_user_block) as Arc<Mutex<dyn virtio_devices::VirtioDevice>>,
-                vhost_user_block as Arc<Mutex<dyn Migratable>>,
-            )
-        } else {
+        let (virtio_device, migratable_device) = {
             let mut options = OpenOptions::new();
             options.read(true);
             options.write(!disk_cfg.readonly);
@@ -2572,49 +2526,7 @@ impl DeviceManager {
 
         let snapshot = snapshot_from_id(self.snapshot.as_ref(), id.as_str());
 
-        let (virtio_device, migratable_device) = if net_cfg.vhost_user {
-            let socket = net_cfg.vhost_socket.as_ref().unwrap().clone();
-            let vu_cfg = VhostUserConfig {
-                socket,
-                num_queues: net_cfg.num_queues,
-                queue_size: net_cfg.queue_size,
-            };
-            let server = match net_cfg.vhost_mode {
-                VhostMode::Client => false,
-                VhostMode::Server => true,
-            };
-            let vhost_user_net = Arc::new(Mutex::new(
-                match virtio_devices::vhost_user::Net::new(
-                    id.clone(),
-                    net_cfg.mac,
-                    net_cfg.mtu,
-                    vu_cfg,
-                    server,
-                    self.seccomp_action.clone(),
-                    self.exit_evt
-                        .try_clone()
-                        .map_err(DeviceManagerError::EventFd)?,
-                    self.force_iommu,
-                    snapshot
-                        .map(|s| s.to_versioned_state())
-                        .transpose()
-                        .map_err(DeviceManagerError::RestoreGetState)?,
-                    net_cfg.offload_tso,
-                    net_cfg.offload_ufo,
-                    net_cfg.offload_csum,
-                ) {
-                    Ok(vun_device) => vun_device,
-                    Err(e) => {
-                        return Err(DeviceManagerError::CreateVhostUserNet(e));
-                    }
-                },
-            ));
-
-            (
-                Arc::clone(&vhost_user_net) as Arc<Mutex<dyn virtio_devices::VirtioDevice>>,
-                vhost_user_net as Arc<Mutex<dyn Migratable>>,
-            )
-        } else {
+        let (virtio_device, migratable_device) = {
             let state = snapshot
                 .map(|s| s.to_versioned_state())
                 .transpose()
@@ -2775,73 +2687,6 @@ impl DeviceManager {
                 .unwrap()
                 .insert(id.clone(), device_node!(id, virtio_rng_device));
         }
-
-        Ok(devices)
-    }
-
-    fn make_virtio_fs_device(
-        &mut self,
-        fs_cfg: &mut FsConfig,
-    ) -> DeviceManagerResult<MetaVirtioDevice> {
-        let id = if let Some(id) = &fs_cfg.id {
-            id.clone()
-        } else {
-            let id = self.next_device_name(FS_DEVICE_NAME_PREFIX)?;
-            fs_cfg.id = Some(id.clone());
-            id
-        };
-
-        info!("Creating virtio-fs device: {:?}", fs_cfg);
-
-        let mut node = device_node!(id);
-
-        if let Some(fs_socket) = fs_cfg.socket.to_str() {
-            let virtio_fs_device = Arc::new(Mutex::new(
-                virtio_devices::vhost_user::Fs::new(
-                    id.clone(),
-                    fs_socket,
-                    &fs_cfg.tag,
-                    fs_cfg.num_queues,
-                    fs_cfg.queue_size,
-                    None,
-                    self.seccomp_action.clone(),
-                    self.exit_evt
-                        .try_clone()
-                        .map_err(DeviceManagerError::EventFd)?,
-                    self.force_iommu,
-                    versioned_state_from_id(self.snapshot.as_ref(), id.as_str())
-                        .map_err(DeviceManagerError::RestoreGetState)?,
-                )
-                .map_err(DeviceManagerError::CreateVirtioFs)?,
-            ));
-
-            // Update the device tree with the migratable device.
-            node.migratable = Some(Arc::clone(&virtio_fs_device) as Arc<Mutex<dyn Migratable>>);
-            self.device_tree.lock().unwrap().insert(id.clone(), node);
-
-            Ok(MetaVirtioDevice {
-                virtio_device: Arc::clone(&virtio_fs_device)
-                    as Arc<Mutex<dyn virtio_devices::VirtioDevice>>,
-                iommu: false,
-                id,
-                pci_segment: fs_cfg.pci_segment,
-                dma_handler: None,
-            })
-        } else {
-            Err(DeviceManagerError::NoVirtioFsSock)
-        }
-    }
-
-    fn make_virtio_fs_devices(&mut self) -> DeviceManagerResult<Vec<MetaVirtioDevice>> {
-        let mut devices = Vec::new();
-
-        let mut fs_devices = self.config.lock().unwrap().fs.clone();
-        if let Some(fs_list_cfg) = &mut fs_devices {
-            for fs_cfg in fs_list_cfg.iter_mut() {
-                devices.push(self.make_virtio_fs_device(fs_cfg)?);
-            }
-        }
-        self.config.lock().unwrap().fs = fs_devices;
 
         Ok(devices)
     }
@@ -4371,13 +4216,6 @@ impl DeviceManager {
         }
 
         let device = self.make_virtio_block_device(disk_cfg)?;
-        self.hotplug_virtio_pci_device(device)
-    }
-
-    pub fn add_fs(&mut self, fs_cfg: &mut FsConfig) -> DeviceManagerResult<PciDeviceInfo> {
-        self.validate_identifier(&fs_cfg.id)?;
-
-        let device = self.make_virtio_fs_device(fs_cfg)?;
         self.hotplug_virtio_pci_device(device)
     }
 

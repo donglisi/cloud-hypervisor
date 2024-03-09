@@ -39,7 +39,7 @@ pub use self::http::start_http_fd_thread;
 pub use self::http::start_http_path_thread;
 
 use crate::config::{
-    DeviceConfig, DiskConfig, FsConfig, NetConfig, PmemConfig, RestoreConfig, UserDeviceConfig,
+    DeviceConfig, DiskConfig, NetConfig, PmemConfig, RestoreConfig, UserDeviceConfig,
     VdpaConfig, VmConfig, VsockConfig,
 };
 use crate::device_tree::DeviceTree;
@@ -330,8 +330,6 @@ pub trait RequestHandler {
 
     fn vm_add_disk(&mut self, disk_cfg: DiskConfig) -> Result<Option<Vec<u8>>, VmError>;
 
-    fn vm_add_fs(&mut self, fs_cfg: FsConfig) -> Result<Option<Vec<u8>>, VmError>;
-
     fn vm_add_pmem(&mut self, pmem_cfg: PmemConfig) -> Result<Option<Vec<u8>>, VmError>;
 
     fn vm_add_net(&mut self, net_cfg: NetConfig) -> Result<Option<Vec<u8>>, VmError>;
@@ -470,43 +468,6 @@ impl ApiAction for AddDisk {
             let response = vmm
                 .vm_add_disk(config)
                 .map_err(ApiError::VmAddDisk)
-                .map(ApiResponsePayload::VmAction);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
-
-pub struct VmAddFs;
-
-impl ApiAction for VmAddFs {
-    type RequestBody = FsConfig;
-    type ResponseBody = Option<Body>;
-
-    fn request(
-        &self,
-        config: Self::RequestBody,
-        response_sender: Sender<ApiResponse>,
-    ) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmAddFs {:?}", config);
-
-            let response = vmm
-                .vm_add_fs(config)
-                .map_err(ApiError::VmAddFs)
                 .map(ApiResponsePayload::VmAction);
 
             response_sender

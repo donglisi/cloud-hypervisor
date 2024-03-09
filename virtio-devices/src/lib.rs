@@ -35,7 +35,6 @@ pub mod seccomp_filters;
 mod thread_helper;
 pub mod transport;
 pub mod vdpa;
-pub mod vhost_user;
 pub mod vsock;
 pub mod watchdog;
 
@@ -72,14 +71,11 @@ const DEVICE_FEATURES_OK: u32 = 0x08;
 const DEVICE_FAILED: u32 = 0x80;
 
 const VIRTIO_F_RING_INDIRECT_DESC: u32 = 28;
-const VIRTIO_F_RING_EVENT_IDX: u32 = 29;
 const VIRTIO_F_VERSION_1: u32 = 32;
 const VIRTIO_F_IOMMU_PLATFORM: u32 = 33;
 const VIRTIO_F_IN_ORDER: u32 = 35;
-const VIRTIO_F_ORDER_PLATFORM: u32 = 36;
 #[allow(dead_code)]
 const VIRTIO_F_SR_IOV: u32 = 37;
-const VIRTIO_F_NOTIFICATION_DATA: u32 = 38;
 
 #[derive(Error, Debug)]
 pub enum ActivateError {
@@ -89,10 +85,6 @@ pub enum ActivateError {
     CloneExitEventFd(std::io::Error),
     #[error("Failed to spawn thread: {0}")]
     ThreadSpawn(std::io::Error),
-    #[error("Failed to setup vhost-user-fs daemon: {0}")]
-    VhostUserFsSetup(vhost_user::Error),
-    #[error("Failed to setup vhost-user daemon: {0}")]
-    VhostUserSetup(vhost_user::Error),
     #[error("Failed to create seccomp filter: {0}")]
     CreateSeccompFilter(seccompiler::Error),
     #[error("Failed to create rate limiter: {0}")]
@@ -111,10 +103,6 @@ pub enum Error {
     FailedSignalingUsedQueue(io::Error),
     #[error("I/O Error: {0}")]
     IoError(io::Error),
-    #[error("Failed to update memory vhost-user: {0}")]
-    VhostUserUpdateMemory(vhost_user::Error),
-    #[error("Failed to add memory region vhost-user: {0}")]
-    VhostUserAddMemoryRegion(vhost_user::Error),
     #[error("Failed to set shared memory region")]
     SetShmRegionsNotSupported,
     #[error("Failed to process net queue: {0}")]
