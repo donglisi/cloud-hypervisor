@@ -94,7 +94,6 @@ members = [
     "serial_buffer",
     "tracer",
     "vhost_user_block",
-    "vhost_user_net",
     "virtio-devices",
     "vmm",
     "vm-allocator",
