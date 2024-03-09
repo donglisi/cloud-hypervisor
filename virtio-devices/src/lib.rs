@@ -27,7 +27,6 @@ pub mod block;
 mod console;
 pub mod epoll_helper;
 mod iommu;
-pub mod mem;
 pub mod net;
 mod pmem;
 mod rng;
@@ -47,7 +46,6 @@ pub use self::epoll_helper::{
     EpollHelper, EpollHelperError, EpollHelperHandler, EPOLL_HELPER_EVENT_LAST,
 };
 pub use self::iommu::{AccessPlatformMapping, Iommu, IommuMapping};
-pub use self::mem::{BlocksState, Mem, VirtioMemMappingSource, VIRTIO_MEM_ALIGN_SIZE};
 pub use self::net::{Net, NetCtrlEpollHandler};
 pub use self::pmem::Pmem;
 pub use self::rng::Rng;

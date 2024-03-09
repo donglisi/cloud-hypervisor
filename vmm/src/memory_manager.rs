@@ -4,7 +4,7 @@
 //
 #[cfg(target_arch = "x86_64")]
 use crate::config::SgxEpcConfig;
-use crate::config::{HotplugMethod, MemoryConfig, MemoryZoneConfig};
+use crate::config::{MemoryConfig, MemoryZoneConfig};
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::coredump::{
     CoredumpMemoryRegion, CoredumpMemoryRegions, DumpState, GuestDebuggableError,
@@ -28,7 +28,6 @@ use serde::{Deserialize, Serialize};
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
 use std::io::{self};
 use std::ops::{BitAnd, Deref, Not, Sub};
@@ -42,7 +41,6 @@ use std::{ffi, thread};
 use tracer::trace_scoped;
 use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
-use virtio_devices::BlocksState;
 #[cfg(target_arch = "x86_64")]
 use vm_allocator::GsiApic;
 use vm_allocator::{AddressAllocator, SystemAllocator};
@@ -92,53 +90,14 @@ struct HotPlugState {
     removing: bool,
 }
 
-pub struct VirtioMemZone {
-    region: Arc<GuestRegionMmap>,
-    virtio_device: Option<Arc<Mutex<virtio_devices::Mem>>>,
-    hotplugged_size: u64,
-    hugepages: bool,
-    blocks_state: Arc<Mutex<BlocksState>>,
-}
-
-impl VirtioMemZone {
-    pub fn region(&self) -> &Arc<GuestRegionMmap> {
-        &self.region
-    }
-    pub fn set_virtio_device(&mut self, virtio_device: Arc<Mutex<virtio_devices::Mem>>) {
-        self.virtio_device = Some(virtio_device);
-    }
-    pub fn hotplugged_size(&self) -> u64 {
-        self.hotplugged_size
-    }
-    pub fn hugepages(&self) -> bool {
-        self.hugepages
-    }
-    pub fn blocks_state(&self) -> &Arc<Mutex<BlocksState>> {
-        &self.blocks_state
-    }
-    pub fn plugged_ranges(&self) -> MemoryRangeTable {
-        self.blocks_state
-            .lock()
-            .unwrap()
-            .memory_ranges(self.region.start_addr().raw_value(), true)
-    }
-}
-
 #[derive(Default)]
 pub struct MemoryZone {
     regions: Vec<Arc<GuestRegionMmap>>,
-    virtio_mem_zone: Option<VirtioMemZone>,
 }
 
 impl MemoryZone {
     pub fn regions(&self) -> &Vec<Arc<GuestRegionMmap>> {
         &self.regions
-    }
-    pub fn virtio_mem_zone(&self) -> &Option<VirtioMemZone> {
-        &self.virtio_mem_zone
-    }
-    pub fn virtio_mem_zone_mut(&mut self) -> Option<&mut VirtioMemZone> {
-        self.virtio_mem_zone.as_mut()
     }
 }
 
@@ -167,13 +126,11 @@ pub struct MemoryManager {
     next_memory_slot: u32,
     start_of_device_area: GuestAddress,
     end_of_device_area: GuestAddress,
-    end_of_ram_area: GuestAddress,
     pub vm: Arc<dyn hypervisor::Vm>,
     hotplug_slots: Vec<HotPlugState>,
     selected_slot: usize,
     mergeable: bool,
     allocator: Arc<Mutex<SystemAllocator>>,
-    hotplug_method: HotplugMethod,
     boot_ram: u64,
     current_ram: u64,
     next_hotplug_slot: usize,
@@ -184,13 +141,11 @@ pub struct MemoryManager {
     thp: bool,
     #[cfg(target_arch = "x86_64")]
     sgx_epc_region: Option<SgxEpcRegion>,
-    user_provided_zones: bool,
     snapshot_memory_ranges: MemoryRangeTable,
     memory_zones: MemoryZones,
     log_dirty: bool, // Enable dirty logging for created RAM regions
     arch_mem_regions: Vec<ArchMemRegion>,
     ram_allocator: AddressAllocator,
-    dynamic: bool,
 
     // Keep track of calls to create_userspace_mapping() for guest RAM.
     // This is useful for getting the dirty pages as we need to know the
@@ -239,9 +194,6 @@ pub enum Error {
 
     /// Eventfd write error
     EventfdError(io::Error),
-
-    /// Failed to virtio-mem resize
-    VirtioMemResizeFail(virtio_devices::mem::Error),
 
     /// Cannot restore VM
     Restore(MigratableError),
@@ -686,19 +638,7 @@ impl MemoryManager {
                     )?;
                     memory_regions.push(Arc::clone(&region));
                     if let Some(memory_zone) = memory_zones.get_mut(&guest_ram_mapping.zone_id) {
-                        if guest_ram_mapping.virtio_mem {
-                            let hotplugged_size = zone_config.hotplugged_size.unwrap_or(0);
-                            let region_size = region.len();
-                            memory_zone.virtio_mem_zone = Some(VirtioMemZone {
-                                region,
-                                virtio_device: None,
-                                hotplugged_size,
-                                hugepages: zone_config.hugepages,
-                                blocks_state: Arc::new(Mutex::new(BlocksState::new(region_size))),
-                            });
-                        } else {
-                            memory_zone.regions.push(region);
-                        }
+                        memory_zone.regions.push(region);
                     }
                 }
             }
@@ -770,32 +710,6 @@ impl MemoryManager {
                 allow_mem_hotplug = true;
             }
 
-            if let Some(hotplugged_size) = config.hotplugged_size {
-                if let Some(hotplug_size) = config.hotplug_size {
-                    if hotplugged_size > hotplug_size {
-                        error!(
-                            "'hotplugged_size' {} can't be bigger than \
-                            'hotplug_size' {}",
-                            hotplugged_size, hotplug_size,
-                        );
-                        return Err(Error::InvalidMemoryParameters);
-                    }
-                } else {
-                    error!(
-                        "Invalid to define 'hotplugged_size' when there is\
-                        no 'hotplug_size'"
-                    );
-                    return Err(Error::InvalidMemoryParameters);
-                }
-                if config.hotplug_method == HotplugMethod::Acpi {
-                    error!(
-                        "Invalid to define 'hotplugged_size' with hotplug \
-                        method 'acpi'"
-                    );
-                    return Err(Error::InvalidMemoryParameters);
-                }
-            }
-
             // Create a single zone from the global memory config. This lets
             // us reuse the codepath for user defined memory zones.
             let zones = vec![MemoryZoneConfig {
@@ -805,9 +719,9 @@ impl MemoryManager {
                 shared: config.shared,
                 hugepages: config.hugepages,
                 hugepage_size: config.hugepage_size,
+                hotplugged_size: config.hotplugged_size,
                 host_numa_node: None,
                 hotplug_size: config.hotplug_size,
-                hotplugged_size: config.hotplugged_size,
                 prefault: config.prefault,
             }];
 
@@ -839,37 +753,6 @@ impl MemoryManager {
                     );
                     return Err(Error::InvalidSharedMemoryZoneWithHostNuma);
                 }
-
-                if zone.hotplug_size.is_some() && config.hotplug_method == HotplugMethod::Acpi {
-                    error!("Invalid to set ACPI hotplug method for memory zones");
-                    return Err(Error::InvalidHotplugMethodWithMemoryZones);
-                }
-
-                if let Some(hotplugged_size) = zone.hotplugged_size {
-                    if let Some(hotplug_size) = zone.hotplug_size {
-                        if hotplugged_size > hotplug_size {
-                            error!(
-                                "'hotplugged_size' {} can't be bigger than \
-                                'hotplug_size' {}",
-                                hotplugged_size, hotplug_size,
-                            );
-                            return Err(Error::InvalidMemoryParameters);
-                        }
-                    } else {
-                        error!(
-                            "Invalid to define 'hotplugged_size' when there is\
-                            no 'hotplug_size' for a memory zone"
-                        );
-                        return Err(Error::InvalidMemoryParameters);
-                    }
-                    if config.hotplug_method == HotplugMethod::Acpi {
-                        error!(
-                            "Invalid to define 'hotplugged_size' with hotplug \
-                            method 'acpi'"
-                        );
-                        return Err(Error::InvalidMemoryParameters);
-                    }
-                }
             }
 
             Ok((total_ram_size, zones, allow_mem_hotplug))
@@ -880,16 +763,12 @@ impl MemoryManager {
         let mut list = Vec::new();
 
         for (zone_id, memory_zone) in self.memory_zones.iter() {
-            let mut regions: Vec<(Arc<vm_memory::GuestRegionMmap<AtomicBitmap>>, bool)> =
+            let regions: Vec<(Arc<vm_memory::GuestRegionMmap<AtomicBitmap>>, bool)> =
                 memory_zone
                     .regions()
                     .iter()
                     .map(|r| (r.clone(), false))
                     .collect();
-
-            if let Some(virtio_mem_zone) = memory_zone.virtio_mem_zone() {
-                regions.push((virtio_mem_zone.region().clone(), true));
-            }
 
             list.push((zone_id.clone(), regions));
         }
@@ -1056,79 +935,16 @@ impl MemoryManager {
                 })
                 .collect();
 
-            let (mem_regions, mut memory_zones) =
+            let (mem_regions, memory_zones) =
                 Self::create_memory_regions_from_zones(&ram_regions, &zones, prefault, config.thp)?;
 
-            let mut guest_memory =
+            let guest_memory =
                 GuestMemoryMmap::from_arc_regions(mem_regions).map_err(Error::GuestMemory)?;
 
             let boot_guest_memory = guest_memory.clone();
 
-            let mut start_of_device_area =
+            let start_of_device_area =
                 MemoryManager::start_addr(guest_memory.last_addr(), allow_mem_hotplug)?;
-
-            // Update list of memory zones for resize.
-            for zone in zones.iter() {
-                if let Some(memory_zone) = memory_zones.get_mut(&zone.id) {
-                    if let Some(hotplug_size) = zone.hotplug_size {
-                        if hotplug_size == 0 {
-                            error!("'hotplug_size' can't be 0");
-                            return Err(Error::InvalidHotplugSize);
-                        }
-
-                        if !user_provided_zones && config.hotplug_method == HotplugMethod::Acpi {
-                            start_of_device_area = start_of_device_area
-                                .checked_add(hotplug_size)
-                                .ok_or(Error::GuestAddressOverFlow)?;
-                        } else {
-                            // Alignment must be "natural" i.e. same as size of block
-                            let start_addr = GuestAddress(
-                                (start_of_device_area.0 + virtio_devices::VIRTIO_MEM_ALIGN_SIZE
-                                    - 1)
-                                    / virtio_devices::VIRTIO_MEM_ALIGN_SIZE
-                                    * virtio_devices::VIRTIO_MEM_ALIGN_SIZE,
-                            );
-
-                            // When `prefault` is set by vm_restore, memory manager
-                            // will create ram region with `prefault` option in
-                            // restore config rather than same option in zone
-                            let region = MemoryManager::create_ram_region(
-                                &None,
-                                0,
-                                start_addr,
-                                hotplug_size as usize,
-                                prefault.unwrap_or(zone.prefault),
-                                zone.shared,
-                                zone.hugepages,
-                                zone.hugepage_size,
-                                zone.host_numa_node,
-                                None,
-                                config.thp,
-                            )?;
-
-                            guest_memory = guest_memory
-                                .insert_region(Arc::clone(&region))
-                                .map_err(Error::GuestMemory)?;
-
-                            let hotplugged_size = zone.hotplugged_size.unwrap_or(0);
-                            let region_size = region.len();
-                            memory_zone.virtio_mem_zone = Some(VirtioMemZone {
-                                region,
-                                virtio_device: None,
-                                hotplugged_size,
-                                hugepages: zone.hugepages,
-                                blocks_state: Arc::new(Mutex::new(BlocksState::new(region_size))),
-                            });
-
-                            start_of_device_area = start_addr
-                                .checked_add(hotplug_size)
-                                .ok_or(Error::GuestAddressOverFlow)?;
-                        }
-                    }
-                } else {
-                    return Err(Error::MissingZoneIdentifier);
-                }
-            }
 
             let mut hotplug_slots = Vec::with_capacity(HOTPLUG_COUNT);
             hotplug_slots.resize_with(HOTPLUG_COUNT, HotPlugState::default);
@@ -1177,24 +993,8 @@ impl MemoryManager {
         #[cfg(feature = "tdx")]
         let dynamic = !tdx_enabled;
 
-        let acpi_address = if dynamic
-            && config.hotplug_method == HotplugMethod::Acpi
-            && (config.hotplug_size.unwrap_or_default() > 0)
-        {
-            Some(
-                allocator
-                    .lock()
-                    .unwrap()
-                    .allocate_platform_mmio_addresses(None, MEMORY_MANAGER_ACPI_SIZE as u64, None)
-                    .ok_or(Error::AllocateMmioAddress)?,
-            )
-        } else {
-            None
-        };
+        let acpi_address = None;
 
-        // If running on SGX the start of device area and RAM area may diverge but
-        // at this point they are next to each other.
-        let end_of_ram_area = start_of_device_area.unchecked_sub(1);
         let ram_allocator = AddressAllocator::new(GuestAddress(0), start_of_device_area.0).unwrap();
 
         let mut memory_manager = MemoryManager {
@@ -1203,13 +1003,11 @@ impl MemoryManager {
             next_memory_slot,
             start_of_device_area,
             end_of_device_area,
-            end_of_ram_area,
             vm,
             hotplug_slots,
             selected_slot,
             mergeable: config.mergeable,
             allocator,
-            hotplug_method: config.hotplug_method,
             boot_ram,
             current_ram,
             next_hotplug_slot,
@@ -1219,7 +1017,6 @@ impl MemoryManager {
             prefault: config.prefault,
             #[cfg(target_arch = "x86_64")]
             sgx_epc_region: None,
-            user_provided_zones,
             snapshot_memory_ranges: MemoryRangeTable::default(),
             memory_zones,
             guest_ram_mappings: Vec::new(),
@@ -1227,7 +1024,6 @@ impl MemoryManager {
             log_dirty: dynamic, // Cannot log dirty pages on a TD
             arch_mem_regions,
             ram_allocator,
-            dynamic,
             #[cfg(target_arch = "aarch64")]
             uefi_flash: None,
             thp: config.thp,
@@ -1656,50 +1452,6 @@ impl MemoryManager {
         Ok(region)
     }
 
-    fn hotplug_ram_region(&mut self, size: usize) -> Result<Arc<GuestRegionMmap>, Error> {
-        info!("Hotplugging new RAM: {}", size);
-
-        // Check that there is a free slot
-        if self.next_hotplug_slot >= HOTPLUG_COUNT {
-            return Err(Error::NoSlotAvailable);
-        }
-
-        // "Inserted" DIMM must have a size that is a multiple of 128MiB
-        if size % (128 << 20) != 0 {
-            return Err(Error::InvalidSize);
-        }
-
-        let start_addr = MemoryManager::start_addr(self.guest_memory.memory().last_addr(), true)?;
-
-        if start_addr.checked_add(size.try_into().unwrap()).unwrap() >= self.end_of_ram_area {
-            return Err(Error::InsufficientHotplugRam);
-        }
-
-        let region = self.add_ram_region(start_addr, size)?;
-
-        // Add region to the list of regions associated with the default
-        // memory zone.
-        if let Some(memory_zone) = self.memory_zones.get_mut(DEFAULT_MEMORY_ZONE) {
-            memory_zone.regions.push(Arc::clone(&region));
-        }
-
-        // Tell the allocator
-        self.ram_allocator
-            .allocate(Some(start_addr), size as GuestUsize, None)
-            .ok_or(Error::MemoryRangeAllocation)?;
-
-        // Update the slot so that it can be queried via the I/O port
-        let slot = &mut self.hotplug_slots[self.next_hotplug_slot];
-        slot.active = true;
-        slot.inserting = true;
-        slot.base = region.start_addr().0;
-        slot.length = region.len();
-
-        self.next_hotplug_slot += 1;
-
-        Ok(region)
-    }
-
     pub fn guest_memory(&self) -> GuestMemoryAtomic<GuestMemoryMmap> {
         self.guest_memory.clone()
     }
@@ -1856,83 +1608,6 @@ impl MemoryManager {
         Ok(())
     }
 
-    pub fn virtio_mem_resize(&mut self, id: &str, size: u64) -> Result<(), Error> {
-        if let Some(memory_zone) = self.memory_zones.get_mut(id) {
-            if let Some(virtio_mem_zone) = &mut memory_zone.virtio_mem_zone {
-                if let Some(virtio_mem_device) = virtio_mem_zone.virtio_device.as_ref() {
-                    virtio_mem_device
-                        .lock()
-                        .unwrap()
-                        .resize(size)
-                        .map_err(Error::VirtioMemResizeFail)?;
-                }
-
-                // Keep the hotplugged_size up to date.
-                virtio_mem_zone.hotplugged_size = size;
-            } else {
-                error!("Failed resizing virtio-mem region: No virtio-mem handler");
-                return Err(Error::MissingVirtioMemHandler);
-            }
-
-            return Ok(());
-        }
-
-        error!("Failed resizing virtio-mem region: Unknown memory zone");
-        Err(Error::UnknownMemoryZone)
-    }
-
-    /// In case this function resulted in adding a new memory region to the
-    /// guest memory, the new region is returned to the caller. The virtio-mem
-    /// use case never adds a new region as the whole hotpluggable memory has
-    /// already been allocated at boot time.
-    pub fn resize(&mut self, desired_ram: u64) -> Result<Option<Arc<GuestRegionMmap>>, Error> {
-        if self.user_provided_zones {
-            error!(
-                "Not allowed to resize guest memory when backed with user \
-                defined memory zones."
-            );
-            return Err(Error::InvalidResizeWithMemoryZones);
-        }
-
-        let mut region: Option<Arc<GuestRegionMmap>> = None;
-        match self.hotplug_method {
-            HotplugMethod::VirtioMem => {
-                if desired_ram >= self.boot_ram {
-                    if !self.dynamic {
-                        return Ok(region);
-                    }
-
-                    self.virtio_mem_resize(DEFAULT_MEMORY_ZONE, desired_ram - self.boot_ram)?;
-                    self.current_ram = desired_ram;
-                }
-            }
-            HotplugMethod::Acpi => {
-                if desired_ram > self.current_ram {
-                    if !self.dynamic {
-                        return Ok(region);
-                    }
-
-                    region =
-                        Some(self.hotplug_ram_region((desired_ram - self.current_ram) as usize)?);
-                    self.current_ram = desired_ram;
-                }
-            }
-        }
-        Ok(region)
-    }
-
-    pub fn resize_zone(&mut self, id: &str, virtio_mem_size: u64) -> Result<(), Error> {
-        if !self.user_provided_zones {
-            error!(
-                "Not allowed to resize guest memory zone when no zone is \
-                defined."
-            );
-            return Err(Error::ResizeZone);
-        }
-
-        self.virtio_mem_resize(id, virtio_mem_size)
-    }
-
     #[cfg(target_arch = "x86_64")]
     pub fn setup_sgx(&mut self, sgx_epc_config: Vec<SgxEpcConfig>) -> Result<(), Error> {
         let file = OpenOptions::new()
@@ -2069,10 +1744,6 @@ impl MemoryManager {
         let mut table = MemoryRangeTable::default();
 
         for memory_zone in self.memory_zones.values() {
-            if let Some(virtio_mem_zone) = memory_zone.virtio_mem_zone() {
-                table.extend(virtio_mem_zone.plugged_ranges());
-            }
-
             for region in memory_zone.regions() {
                 if snapshot {
                     if let Some(file_offset) = region.file_offset() {

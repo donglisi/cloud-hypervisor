@@ -1523,7 +1523,7 @@ impl RequestHandler for Vmm {
         self.vm_config.as_ref().ok_or(VmError::VmNotCreated)?;
 
         if let Some(ref mut vm) = self.vm {
-            if let Err(e) = vm.resize(desired_vcpus, desired_ram, desired_balloon) {
+            if let Err(e) = vm.resize(desired_vcpus, desired_balloon) {
                 error!("Error when resizing VM: {:?}", e);
                 Err(e)
             } else {
@@ -1543,34 +1543,6 @@ impl RequestHandler for Vmm {
                 }
             }
             Ok(())
-        }
-    }
-
-    fn vm_resize_zone(&mut self, id: String, desired_ram: u64) -> result::Result<(), VmError> {
-        self.vm_config.as_ref().ok_or(VmError::VmNotCreated)?;
-
-        if let Some(ref mut vm) = self.vm {
-            if let Err(e) = vm.resize_zone(id, desired_ram) {
-                error!("Error when resizing VM: {:?}", e);
-                Err(e)
-            } else {
-                Ok(())
-            }
-        } else {
-            // Update VmConfig by setting the new desired ram.
-            let memory_config = &mut self.vm_config.as_ref().unwrap().lock().unwrap().memory;
-
-            if let Some(zones) = &mut memory_config.zones {
-                for zone in zones.iter_mut() {
-                    if zone.id == id {
-                        zone.size = desired_ram;
-                        return Ok(());
-                    }
-                }
-            }
-
-            error!("Could not find the memory zone {} for the resize", id);
-            Err(VmError::ResizeZone)
         }
     }
 

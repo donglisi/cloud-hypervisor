@@ -317,8 +317,6 @@ pub trait RequestHandler {
         desired_balloon: Option<u64>,
     ) -> Result<(), VmError>;
 
-    fn vm_resize_zone(&mut self, id: String, desired_ram: u64) -> Result<(), VmError>;
-
     fn vm_remove_device(&mut self, id: String) -> Result<(), VmError>;
 
     fn vm_add_disk(&mut self, disk_cfg: DiskConfig) -> Result<Option<Vec<u8>>, VmError>;
@@ -921,43 +919,6 @@ impl ApiAction for VmResize {
                     resize_data.desired_balloon,
                 )
                 .map_err(ApiError::VmResize)
-                .map(|_| ApiResponsePayload::Empty);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
-
-pub struct VmResizeZone;
-
-impl ApiAction for VmResizeZone {
-    type RequestBody = VmResizeZoneData;
-    type ResponseBody = Option<Body>;
-
-    fn request(
-        &self,
-        resize_zone_data: Self::RequestBody,
-        response_sender: Sender<ApiResponse>,
-    ) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmResizeZone {:?}", resize_zone_data);
-
-            let response = vmm
-                .vm_resize_zone(resize_zone_data.id, resize_zone_data.desired_ram)
-                .map_err(ApiError::VmResizeZone)
                 .map(|_| ApiResponsePayload::Empty);
 
             response_sender

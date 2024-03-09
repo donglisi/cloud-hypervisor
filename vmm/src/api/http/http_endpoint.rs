@@ -10,7 +10,7 @@ use crate::api::VmCoredump;
 use crate::api::{
     AddDisk, ApiAction, ApiRequest, VmAddNet, VmAddPmem,
     VmBoot, VmConfig, VmCounters, VmDelete, VmPause, VmPowerButton,
-    VmReboot, VmReceiveMigration, VmRemoveDevice, VmResize, VmResizeZone, VmRestore, VmResume,
+    VmReboot, VmReceiveMigration, VmRemoveDevice, VmResize, VmRestore, VmResume,
     VmSendMigration, VmShutdown, VmSnapshot,
 };
 use crate::config::NetConfig;
@@ -177,7 +177,6 @@ vm_action_put_handler_body!(AddDisk);
 vm_action_put_handler_body!(VmAddPmem);
 vm_action_put_handler_body!(VmRemoveDevice);
 vm_action_put_handler_body!(VmResize);
-vm_action_put_handler_body!(VmResizeZone);
 vm_action_put_handler_body!(VmRestore);
 vm_action_put_handler_body!(VmSnapshot);
 vm_action_put_handler_body!(VmReceiveMigration);

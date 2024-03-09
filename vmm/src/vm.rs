@@ -12,7 +12,7 @@
 //
 
 use crate::config::{
-    add_to_config, DiskConfig, HotplugMethod, NetConfig, PmemConfig,
+    add_to_config, DiskConfig, NetConfig, PmemConfig,
     ValidationError, VmConfig,
 };
 use crate::config::{NumaConfig, PayloadConfig};
@@ -503,7 +503,7 @@ impl Vm {
 
         // Create NUMA nodes based on NumaConfig.
         let numa_nodes =
-            Self::create_numa_nodes(config.lock().unwrap().numa.clone(), &memory_manager)?;
+            Self::create_numa_nodes(config.lock().unwrap().numa.clone())?;
 
         #[cfg(feature = "tdx")]
         let tdx_enabled = config.lock().unwrap().is_tdx_enabled();
@@ -697,10 +697,7 @@ impl Vm {
 
     fn create_numa_nodes(
         configs: Option<Vec<NumaConfig>>,
-        memory_manager: &Arc<Mutex<MemoryManager>>,
     ) -> Result<NumaNodes> {
-        let mm = memory_manager.lock().unwrap();
-        let mm_zones = mm.memory_zones();
         let mut numa_nodes = BTreeMap::new();
 
         if let Some(configs) = &configs {
@@ -711,21 +708,6 @@ impl Vm {
                 }
 
                 let mut node = NumaNode::default();
-
-                if let Some(memory_zones) = &config.memory_zones {
-                    for memory_zone in memory_zones.iter() {
-                        if let Some(mm_zone) = mm_zones.get(memory_zone) {
-                            node.memory_regions.extend(mm_zone.regions().clone());
-                            if let Some(virtiomem_zone) = mm_zone.virtio_mem_zone() {
-                                node.hotplug_regions.push(virtiomem_zone.region().clone());
-                            }
-                            node.memory_zones.push(memory_zone.clone());
-                        } else {
-                            error!("Unknown memory zone '{}'", memory_zone);
-                            return Err(Error::InvalidNumaConfig);
-                        }
-                    }
-                }
 
                 if let Some(cpus) = &config.cpus {
                     node.cpus.extend(cpus);
@@ -1346,7 +1328,6 @@ impl Vm {
     pub fn resize(
         &mut self,
         desired_vcpus: Option<u8>,
-        desired_memory: Option<u64>,
         desired_balloon: Option<u64>,
     ) -> Result<()> {
         event!("vm", "resizing");
@@ -1368,50 +1349,6 @@ impl Vm {
             self.config.lock().unwrap().cpus.boot_vcpus = desired_vcpus;
         }
 
-        if let Some(desired_memory) = desired_memory {
-            let new_region = self
-                .memory_manager
-                .lock()
-                .unwrap()
-                .resize(desired_memory)
-                .map_err(Error::MemoryManager)?;
-
-            let memory_config = &mut self.config.lock().unwrap().memory;
-
-            if let Some(new_region) = &new_region {
-                self.device_manager
-                    .lock()
-                    .unwrap()
-                    .update_memory(new_region)
-                    .map_err(Error::DeviceManager)?;
-
-                match memory_config.hotplug_method {
-                    HotplugMethod::Acpi => {
-                        self.device_manager
-                            .lock()
-                            .unwrap()
-                            .notify_hotplug(AcpiNotificationFlags::MEMORY_DEVICES_CHANGED)
-                            .map_err(Error::DeviceManager)?;
-                    }
-                    HotplugMethod::VirtioMem => {}
-                }
-            }
-
-            // We update the VM config regardless of the actual guest resize
-            // operation result (happened or not), so that if the VM reboots
-            // it will be running with the last configure memory size.
-            match memory_config.hotplug_method {
-                HotplugMethod::Acpi => memory_config.size = desired_memory,
-                HotplugMethod::VirtioMem => {
-                    if desired_memory > memory_config.size {
-                        memory_config.hotplugged_size = Some(desired_memory - memory_config.size);
-                    } else {
-                        memory_config.hotplugged_size = None;
-                    }
-                }
-            }
-        }
-
         if let Some(desired_balloon) = desired_balloon {
             self.device_manager
                 .lock()
@@ -1429,42 +1366,6 @@ impl Vm {
         event!("vm", "resized");
 
         Ok(())
-    }
-
-    pub fn resize_zone(&mut self, id: String, desired_memory: u64) -> Result<()> {
-        let memory_config = &mut self.config.lock().unwrap().memory;
-
-        if let Some(zones) = &mut memory_config.zones {
-            for zone in zones.iter_mut() {
-                if zone.id == id {
-                    if desired_memory >= zone.size {
-                        let hotplugged_size = desired_memory - zone.size;
-                        self.memory_manager
-                            .lock()
-                            .unwrap()
-                            .resize_zone(&id, desired_memory - zone.size)
-                            .map_err(Error::MemoryManager)?;
-                        // We update the memory zone config regardless of the
-                        // actual 'resize-zone' operation result (happened or
-                        // not), so that if the VM reboots it will be running
-                        // with the last configured memory zone size.
-                        zone.hotplugged_size = Some(hotplugged_size);
-
-                        return Ok(());
-                    } else {
-                        error!(
-                            "Invalid to ask less ({}) than boot RAM ({}) for \
-                            this memory zone",
-                            desired_memory, zone.size,
-                        );
-                        return Err(Error::ResizeZone);
-                    }
-                }
-            }
-        }
-
-        error!("Could not find the memory zone {} for the resize", id);
-        Err(Error::ResizeZone)
     }
 
     pub fn remove_device(&mut self, id: String) -> Result<()> {

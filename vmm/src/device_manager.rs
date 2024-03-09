@@ -77,7 +77,7 @@ use tracer::trace_scoped;
 use virtio_devices::transport::VirtioTransport;
 use virtio_devices::transport::{VirtioPciDevice, VirtioPciDeviceActivator};
 use virtio_devices::{
-    AccessPlatformMapping, ActivateError, VirtioMemMappingSource,
+    AccessPlatformMapping, ActivateError,
 };
 use virtio_devices::{Endpoint, IommuMapping};
 use vm_allocator::{AddressAllocator, SystemAllocator};
@@ -114,7 +114,6 @@ const DEBUGCON_DEVICE_NAME: &str = "__debug_console";
 const GPIO_DEVICE_NAME: &str = "__gpio";
 const RNG_DEVICE_NAME: &str = "__rng";
 const IOMMU_DEVICE_NAME: &str = "__iommu";
-const BALLOON_DEVICE_NAME: &str = "__balloon";
 const CONSOLE_DEVICE_NAME: &str = "__console";
 const PVPANIC_DEVICE_NAME: &str = "__pvpanic";
 
@@ -388,12 +387,6 @@ pub enum DeviceManagerError {
 
     /// Failed to create FixedVhdxDiskSync
     CreateFixedVhdxDiskSync(vhdx::VhdxError),
-
-    /// Failed to add DMA mapping handler to virtio-mem device.
-    AddDmaMappingHandlerVirtioMem(virtio_devices::mem::Error),
-
-    /// Failed to remove DMA mapping handler from virtio-mem device.
-    RemoveDmaMappingHandlerVirtioMem(virtio_devices::mem::Error),
 
     /// Cannot duplicate file descriptor
     DupFd(vmm_sys_util::errno::Error),
@@ -838,9 +831,6 @@ pub struct DeviceManager {
     // seccomp action
     seccomp_action: SeccompAction,
 
-    // List of guest NUMA nodes.
-    numa_nodes: NumaNodes,
-
     // Possible handle to the virtio-balloon device
     balloon: Option<Arc<Mutex<virtio_devices::Balloon>>>,
 
@@ -851,9 +841,6 @@ pub struct DeviceManager {
     acpi_address: GuestAddress,
 
     selected_segment: usize,
-
-    // Possible handle to the virtio-mem device
-    virtio_mem_devices: Vec<Arc<Mutex<virtio_devices::Mem>>>,
 
     #[cfg(target_arch = "aarch64")]
     // GPIO device for AArch64
@@ -1088,7 +1075,6 @@ impl DeviceManager {
             #[cfg(target_arch = "aarch64")]
             id_to_dev_info: HashMap::new(),
             seccomp_action,
-            numa_nodes,
             balloon: None,
             activate_evt: activate_evt
                 .try_clone()
@@ -1101,7 +1087,6 @@ impl DeviceManager {
             debug_console_pty: None,
             console_resize_pipe: None,
             original_termios_opt: Arc::new(Mutex::new(None)),
-            virtio_mem_devices: Vec::new(),
             #[cfg(target_arch = "aarch64")]
             gpio_device: None,
             pvpanic_device: None,
@@ -2188,11 +2173,6 @@ impl DeviceManager {
         // Add virtio-pmem if required
         devices.append(&mut self.make_virtio_pmem_devices()?);
 
-        devices.append(&mut self.make_virtio_mem_devices()?);
-
-        // Add virtio-balloon if required
-        devices.append(&mut self.make_virtio_balloon_devices()?);
-
         // Add virtio-watchdog device
         devices.append(&mut self.make_virtio_watchdog_devices()?);
 
@@ -2795,108 +2775,6 @@ impl DeviceManager {
         Ok(devices)
     }
 
-    fn make_virtio_mem_devices(&mut self) -> DeviceManagerResult<Vec<MetaVirtioDevice>> {
-        let mut devices = Vec::new();
-
-        let mm = self.memory_manager.clone();
-        let mut mm = mm.lock().unwrap();
-        for (memory_zone_id, memory_zone) in mm.memory_zones_mut().iter_mut() {
-            if let Some(virtio_mem_zone) = memory_zone.virtio_mem_zone_mut() {
-                info!("Creating virtio-mem device: id = {}", memory_zone_id);
-
-                let node_id = numa_node_id_from_memory_zone_id(&self.numa_nodes, memory_zone_id)
-                    .map(|i| i as u16);
-
-                let virtio_mem_device = Arc::new(Mutex::new(
-                    virtio_devices::Mem::new(
-                        memory_zone_id.clone(),
-                        virtio_mem_zone.region(),
-                        self.seccomp_action.clone(),
-                        node_id,
-                        virtio_mem_zone.hotplugged_size(),
-                        virtio_mem_zone.hugepages(),
-                        self.exit_evt
-                            .try_clone()
-                            .map_err(DeviceManagerError::EventFd)?,
-                        virtio_mem_zone.blocks_state().clone(),
-                        versioned_state_from_id(self.snapshot.as_ref(), memory_zone_id.as_str())
-                            .map_err(DeviceManagerError::RestoreGetState)?,
-                    )
-                    .map_err(DeviceManagerError::CreateVirtioMem)?,
-                ));
-
-                // Update the virtio-mem zone so that it has a handle onto the
-                // virtio-mem device, which will be used for triggering a resize
-                // if needed.
-                virtio_mem_zone.set_virtio_device(Arc::clone(&virtio_mem_device));
-
-                self.virtio_mem_devices.push(Arc::clone(&virtio_mem_device));
-
-                devices.push(MetaVirtioDevice {
-                    virtio_device: Arc::clone(&virtio_mem_device)
-                        as Arc<Mutex<dyn virtio_devices::VirtioDevice>>,
-                    iommu: false,
-                    id: memory_zone_id.clone(),
-                    pci_segment: 0,
-                    dma_handler: None,
-                });
-
-                // Fill the device tree with a new node. In case of restore, we
-                // know there is nothing to do, so we can simply override the
-                // existing entry.
-                self.device_tree.lock().unwrap().insert(
-                    memory_zone_id.clone(),
-                    device_node!(memory_zone_id, virtio_mem_device),
-                );
-            }
-        }
-
-        Ok(devices)
-    }
-
-    fn make_virtio_balloon_devices(&mut self) -> DeviceManagerResult<Vec<MetaVirtioDevice>> {
-        let mut devices = Vec::new();
-
-        if let Some(balloon_config) = &self.config.lock().unwrap().balloon {
-            let id = String::from(BALLOON_DEVICE_NAME);
-            info!("Creating virtio-balloon device: id = {}", id);
-
-            let virtio_balloon_device = Arc::new(Mutex::new(
-                virtio_devices::Balloon::new(
-                    id.clone(),
-                    balloon_config.size,
-                    balloon_config.deflate_on_oom,
-                    balloon_config.free_page_reporting,
-                    self.seccomp_action.clone(),
-                    self.exit_evt
-                        .try_clone()
-                        .map_err(DeviceManagerError::EventFd)?,
-                    versioned_state_from_id(self.snapshot.as_ref(), id.as_str())
-                        .map_err(DeviceManagerError::RestoreGetState)?,
-                )
-                .map_err(DeviceManagerError::CreateVirtioBalloon)?,
-            ));
-
-            self.balloon = Some(virtio_balloon_device.clone());
-
-            devices.push(MetaVirtioDevice {
-                virtio_device: Arc::clone(&virtio_balloon_device)
-                    as Arc<Mutex<dyn virtio_devices::VirtioDevice>>,
-                iommu: false,
-                id: id.clone(),
-                pci_segment: 0,
-                dma_handler: None,
-            });
-
-            self.device_tree
-                .lock()
-                .unwrap()
-                .insert(id.clone(), device_node!(id, virtio_balloon_device));
-        }
-
-        Ok(devices)
-    }
-
     fn make_virtio_watchdog_devices(&mut self) -> DeviceManagerResult<Vec<MetaVirtioDevice>> {
         let mut devices = Vec::new();
 
@@ -3077,19 +2955,6 @@ impl DeviceManager {
                     return Err(DeviceManagerError::MissingVirtualIommu);
                 }
             } else {
-                // Let every virtio-mem device handle the DMA map/unmap through the
-                // DMA handler provided.
-                for virtio_mem_device in self.virtio_mem_devices.iter() {
-                    virtio_mem_device
-                        .lock()
-                        .unwrap()
-                        .add_dma_mapping_handler(
-                            VirtioMemMappingSource::Device(pci_device_bdf.into()),
-                            dma_handler.clone(),
-                        )
-                        .map_err(DeviceManagerError::AddDmaMappingHandlerVirtioMem)?;
-                }
-
                 // Do not register virtio-mem regions, as they are handled directly by
                 // virtio-mem devices.
                 for (_, zone) in self.memory_manager.lock().unwrap().memory_zones().iter() {
@@ -3410,7 +3275,7 @@ impl DeviceManager {
             }
         }
 
-        let (pci_device, bus_device, virtio_device, remove_dma_handler) = match pci_device_handle {
+        let (pci_device, bus_device, virtio_device, _remove_dma_handler) = match pci_device_handle {
             // No need to remove any virtio-mem mapping here as the container outlives all devices
             PciDeviceHandle::Virtio(virtio_pci_device) => {
                 let dev = virtio_pci_device.lock().unwrap();
@@ -3445,18 +3310,6 @@ impl DeviceManager {
                 )
             }
         };
-
-        if remove_dma_handler {
-            for virtio_mem_device in self.virtio_mem_devices.iter() {
-                virtio_mem_device
-                    .lock()
-                    .unwrap()
-                    .remove_dma_mapping_handler(VirtioMemMappingSource::Device(
-                        pci_device_bdf.into(),
-                    ))
-                    .map_err(DeviceManagerError::RemoveDmaMappingHandlerVirtioMem)?;
-            }
-        }
 
         // Free the allocated BARs
         pci_device
@@ -3710,16 +3563,6 @@ impl DeviceManager {
     pub(crate) fn acpi_platform_addresses(&self) -> &AcpiPlatformAddresses {
         &self.acpi_platform_addresses
     }
-}
-
-fn numa_node_id_from_memory_zone_id(numa_nodes: &NumaNodes, memory_zone_id: &str) -> Option<u32> {
-    for (numa_node_id, numa_node) in numa_nodes.iter() {
-        if numa_node.memory_zones.contains(&memory_zone_id.to_owned()) {
-            return Some(*numa_node_id);
-        }
-    }
-
-    None
 }
 
 fn numa_node_id_from_pci_segment_id(numa_nodes: &NumaNodes, pci_segment_id: u16) -> u32 {
