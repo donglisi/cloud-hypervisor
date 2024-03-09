@@ -93,7 +93,6 @@ members = [
     "rate_limiter",
     "serial_buffer",
     "tracer",
-    "vhost_user_block",
     "virtio-devices",
     "vmm",
     "vm-allocator",
