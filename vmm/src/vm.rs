@@ -736,24 +736,6 @@ impl Vm {
                     }
                 }
 
-                #[cfg(target_arch = "x86_64")]
-                if let Some(sgx_epc_sections) = &config.sgx_epc_sections {
-                    if let Some(sgx_epc_region) = mm.sgx_epc_region() {
-                        let mm_sections = sgx_epc_region.epc_sections();
-                        for sgx_epc_section in sgx_epc_sections.iter() {
-                            if let Some(mm_section) = mm_sections.get(sgx_epc_section) {
-                                node.sgx_epc_sections.push(mm_section.clone());
-                            } else {
-                                error!("Unknown SGX EPC section '{}'", sgx_epc_section);
-                                return Err(Error::InvalidNumaConfig);
-                            }
-                        }
-                    } else {
-                        error!("Missing SGX EPC region");
-                        return Err(Error::InvalidNumaConfig);
-                    }
-                }
-
                 numa_nodes.insert(config.guest_numa_id, node);
             }
         }
