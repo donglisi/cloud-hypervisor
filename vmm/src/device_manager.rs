@@ -35,11 +35,11 @@ use arch::NumaNodes;
 use arch::{DeviceType, MmioDeviceInfo};
 use block::{
     async_io::DiskFile, block_aio_is_supported, block_io_uring_is_supported, detect_image_type,
-    fixed_vhd_sync::FixedVhdDiskSync, qcow, qcow_sync::QcowDiskSync, raw_async_aio::RawFileDiskAio,
-    raw_sync::RawFileDiskSync, vhdx, vhdx_sync::VhdxDiskSync, ImageType,
+    qcow, qcow_sync::QcowDiskSync, raw_async_aio::RawFileDiskAio,
+    raw_sync::RawFileDiskSync, ImageType,
 };
 #[cfg(feature = "io_uring")]
-use block::{fixed_vhd_async::FixedVhdDiskAsync, raw_async::RawFileDisk};
+use block::{raw_async::RawFileDisk};
 #[cfg(target_arch = "x86_64")]
 use devices::debug_console::DebugConsole;
 #[cfg(target_arch = "aarch64")]
@@ -365,17 +365,8 @@ pub enum DeviceManagerError {
     /// Failed to set O_DIRECT flag to file descriptor
     SetDirectIo,
 
-    /// Failed to create FixedVhdDiskAsync
-    CreateFixedVhdDiskAsync(io::Error),
-
-    /// Failed to create FixedVhdDiskSync
-    CreateFixedVhdDiskSync(io::Error),
-
     /// Failed to create QcowDiskSync
     CreateQcowDiskSync(qcow::Error),
-
-    /// Failed to create FixedVhdxDiskSync
-    CreateFixedVhdxDiskSync(vhdx::VhdxError),
 
     /// Cannot duplicate file descriptor
     DupFd(vmm_sys_util::errno::Error),
@@ -2159,32 +2150,6 @@ impl DeviceManager {
                 detect_image_type(&mut file).map_err(DeviceManagerError::DetectImageType)?;
 
             let image = match image_type {
-                ImageType::FixedVhd => {
-                    // Use asynchronous backend relying on io_uring if the
-                    // syscalls are supported.
-                    if cfg!(feature = "io_uring")
-                        && !disk_cfg.disable_io_uring
-                        && self.io_uring_is_supported()
-                    {
-                        info!("Using asynchronous fixed VHD disk file (io_uring)");
-
-                        #[cfg(not(feature = "io_uring"))]
-                        unreachable!("Checked in if statement above");
-                        #[cfg(feature = "io_uring")]
-                        {
-                            Box::new(
-                                FixedVhdDiskAsync::new(file)
-                                    .map_err(DeviceManagerError::CreateFixedVhdDiskAsync)?,
-                            ) as Box<dyn DiskFile>
-                        }
-                    } else {
-                        info!("Using synchronous fixed VHD disk file");
-                        Box::new(
-                            FixedVhdDiskSync::new(file)
-                                .map_err(DeviceManagerError::CreateFixedVhdDiskSync)?,
-                        ) as Box<dyn DiskFile>
-                    }
-                }
                 ImageType::Raw => {
                     // Use asynchronous backend relying on io_uring if the
                     // syscalls are supported.
@@ -2213,13 +2178,6 @@ impl DeviceManager {
                     Box::new(
                         QcowDiskSync::new(file, disk_cfg.direct)
                             .map_err(DeviceManagerError::CreateQcowDiskSync)?,
-                    ) as Box<dyn DiskFile>
-                }
-                ImageType::Vhdx => {
-                    info!("Using synchronous VHDX disk file");
-                    Box::new(
-                        VhdxDiskSync::new(file)
-                            .map_err(DeviceManagerError::CreateFixedVhdxDiskSync)?,
                     ) as Box<dyn DiskFile>
                 }
             };

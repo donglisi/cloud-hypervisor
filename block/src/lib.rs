@@ -12,11 +12,8 @@
 extern crate log;
 
 pub mod async_io;
-pub mod fixed_vhd;
 #[cfg(feature = "io_uring")]
 /// Enabled with the `"io_uring"` feature
-pub mod fixed_vhd_async;
-pub mod fixed_vhd_sync;
 pub mod qcow;
 pub mod qcow_sync;
 #[cfg(feature = "io_uring")]
@@ -26,14 +23,9 @@ pub mod qcow_sync;
 pub mod raw_async;
 pub mod raw_async_aio;
 pub mod raw_sync;
-pub mod vhd;
-pub mod vhdx;
-pub mod vhdx_sync;
 
 use crate::async_io::{AsyncIo, AsyncIoError, AsyncIoResult};
-use crate::fixed_vhd::FixedVhd;
 use crate::qcow::{QcowFile, RawFile};
-use crate::vhdx::{Vhdx, VhdxError};
 #[cfg(feature = "io_uring")]
 use io_uring::{opcode, IoUring, Probe};
 use libc::{ioctl, S_IFBLK, S_IFMT};
@@ -99,8 +91,6 @@ pub enum Error {
     RawFileError(std::io::Error),
     #[error("The requested operation does not support multiple descriptors")]
     TooManyDescriptors,
-    #[error("Failure in vhdx: {0}")]
-    VhdxError(VhdxError),
 }
 
 fn build_device_id(disk_path: &Path) -> result::Result<String, Error> {
@@ -741,14 +731,11 @@ where
 }
 
 pub enum ImageType {
-    FixedVhd,
     Qcow2,
     Raw,
-    Vhdx,
 }
 
 const QCOW_MAGIC: u32 = 0x5146_49fb;
-const VHDX_SIGN: u64 = 0x656C_6966_7864_6876;
 
 /// Read a block into memory aligned by the source block size (needed for O_DIRECT)
 pub fn read_aligned_block_size(f: &mut File) -> std::io::Result<Vec<u8>> {
@@ -774,10 +761,6 @@ pub fn detect_image_type(f: &mut File) -> std::io::Result<ImageType> {
     // Check 4 first bytes to get the header value and determine the image type
     let image_type = if u32::from_be_bytes(block[0..4].try_into().unwrap()) == QCOW_MAGIC {
         ImageType::Qcow2
-    } else if vhd::is_fixed_vhd(f)? {
-        ImageType::FixedVhd
-    } else if u64::from_le_bytes(block[0..8].try_into().unwrap()) == VHDX_SIGN {
-        ImageType::Vhdx
     } else {
         ImageType::Raw
     };
@@ -797,12 +780,6 @@ pub fn create_disk_file(mut file: File, direct_io: bool) -> Result<Box<dyn Block
         ImageType::Qcow2 => {
             Box::new(QcowFile::from(RawFile::new(file, direct_io)).map_err(Error::QcowError)?)
                 as Box<dyn BlockBackend>
-        }
-        ImageType::FixedVhd => {
-            Box::new(FixedVhd::new(file).map_err(Error::FixedVhdError)?) as Box<dyn BlockBackend>
-        }
-        ImageType::Vhdx => {
-            Box::new(Vhdx::new(file).map_err(Error::VhdxError)?) as Box<dyn BlockBackend>
         }
         ImageType::Raw => Box::new(RawFile::new(file, direct_io)) as Box<dyn BlockBackend>,
     })
