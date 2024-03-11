@@ -12,7 +12,7 @@
 //
 
 use crate::config::{
-    add_to_config, DiskConfig, NetConfig, PmemConfig,
+    add_to_config, DiskConfig, NetConfig,
     ValidationError, VmConfig,
 };
 use crate::config::{NumaConfig, PayloadConfig};
@@ -1382,30 +1382,6 @@ impl Vm {
         {
             let mut config = self.config.lock().unwrap();
             add_to_config(&mut config.disks, disk_cfg);
-        }
-
-        self.device_manager
-            .lock()
-            .unwrap()
-            .notify_hotplug(AcpiNotificationFlags::PCI_DEVICES_CHANGED)
-            .map_err(Error::DeviceManager)?;
-
-        Ok(pci_device_info)
-    }
-
-    pub fn add_pmem(&mut self, mut pmem_cfg: PmemConfig) -> Result<PciDeviceInfo> {
-        let pci_device_info = self
-            .device_manager
-            .lock()
-            .unwrap()
-            .add_pmem(&mut pmem_cfg)
-            .map_err(Error::DeviceManager)?;
-
-        // Update VmConfig by adding the new device. This is important to
-        // ensure the device would be created in case of a reboot.
-        {
-            let mut config = self.config.lock().unwrap();
-            add_to_config(&mut config.pmem, pmem_cfg);
         }
 
         self.device_manager

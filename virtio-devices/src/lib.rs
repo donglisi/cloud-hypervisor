@@ -27,7 +27,6 @@ pub mod block;
 mod console;
 pub mod epoll_helper;
 pub mod net;
-mod pmem;
 mod rng;
 pub mod seccomp_filters;
 mod thread_helper;
@@ -45,7 +44,6 @@ pub use self::epoll_helper::{
     EpollHelper, EpollHelperError, EpollHelperHandler, EPOLL_HELPER_EVENT_LAST,
 };
 pub use self::net::{Net, NetCtrlEpollHandler};
-pub use self::pmem::Pmem;
 pub use self::rng::Rng;
 pub use self::watchdog::Watchdog;
 use vm_memory::{bitmap::AtomicBitmap, GuestAddress, GuestMemory};
@@ -53,7 +51,6 @@ use vm_virtio::VirtioDeviceType;
 
 type GuestMemoryMmap = vm_memory::GuestMemoryMmap<AtomicBitmap>;
 type GuestRegionMmap = vm_memory::GuestRegionMmap<AtomicBitmap>;
-type MmapRegion = vm_memory::MmapRegion<AtomicBitmap>;
 
 const DEVICE_INIT: u32 = 0x00;
 const DEVICE_ACKNOWLEDGE: u32 = 0x01;

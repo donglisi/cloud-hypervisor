@@ -10,7 +10,7 @@
 //
 
 use crate::config::{
-    ConsoleOutputMode, DiskConfig, NetConfig, PmemConfig,
+    ConsoleOutputMode, DiskConfig, NetConfig,
     VmConfig,
 };
 use crate::cpu::{CpuManager, CPU_MANAGER_ACPI_SIZE};
@@ -53,8 +53,8 @@ use devices::{
 };
 use hypervisor::{HypervisorType, IoEventAddress};
 use libc::{
-    cfmakeraw, isatty, tcgetattr, tcsetattr, termios, MAP_NORESERVE, MAP_PRIVATE, MAP_SHARED,
-    O_TMPFILE, PROT_READ, PROT_WRITE, TCSANOW,
+    cfmakeraw, isatty, tcgetattr, tcsetattr, termios,
+    TCSANOW,
 };
 use pci::{
     DeviceRelocation, PciBarRegionType, PciBdf, PciDevice,
@@ -64,7 +64,7 @@ use seccompiler::SeccompAction;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{read_link, File, OpenOptions};
-use std::io::{self, stdout, Seek, SeekFrom};
+use std::io::{self, stdout};
 use std::mem::zeroed;
 use std::num::Wrapping;
 use std::os::unix::fs::OpenOptionsExt;
@@ -86,9 +86,8 @@ use vm_device::interrupt::{
     InterruptIndex, InterruptManager, LegacyIrqGroupConfig, MsiIrqGroupConfig,
 };
 use vm_device::{Bus, BusDevice, Resource};
-use vm_memory::guest_memory::FileOffset;
 use vm_memory::GuestMemoryRegion;
-use vm_memory::{Address, GuestAddress, GuestUsize, MmapRegion};
+use vm_memory::{Address, GuestAddress, GuestUsize};
 #[cfg(target_arch = "x86_64")]
 use vm_memory::{GuestAddressSpace, GuestMemory};
 use vm_migration::{
@@ -121,7 +120,6 @@ const PVPANIC_DEVICE_NAME: &str = "__pvpanic";
 // identifiers if the user doesn't give one
 const DISK_DEVICE_NAME_PREFIX: &str = "_disk";
 const NET_DEVICE_NAME_PREFIX: &str = "_net";
-const PMEM_DEVICE_NAME_PREFIX: &str = "_pmem";
 const WATCHDOG_DEVICE_NAME: &str = "__watchdog";
 const VIRTIO_PCI_DEVICE_NAME_PREFIX: &str = "_virtio-pci";
 
@@ -2109,9 +2107,6 @@ impl DeviceManager {
         devices.append(&mut self.make_virtio_net_devices()?);
         devices.append(&mut self.make_virtio_rng_devices()?);
 
-        // Add virtio-pmem if required
-        devices.append(&mut self.make_virtio_pmem_devices()?);
-
         // Add virtio-watchdog device
         devices.append(&mut self.make_virtio_watchdog_devices()?);
 
@@ -2524,192 +2519,6 @@ impl DeviceManager {
                 .unwrap()
                 .insert(id.clone(), device_node!(id, virtio_rng_device));
         }
-
-        Ok(devices)
-    }
-
-    fn make_virtio_pmem_device(
-        &mut self,
-        pmem_cfg: &mut PmemConfig,
-    ) -> DeviceManagerResult<MetaVirtioDevice> {
-        let id = if let Some(id) = &pmem_cfg.id {
-            id.clone()
-        } else {
-            let id = self.next_device_name(PMEM_DEVICE_NAME_PREFIX)?;
-            pmem_cfg.id = Some(id.clone());
-            id
-        };
-
-        info!("Creating virtio-pmem device: {:?}", pmem_cfg);
-
-        let mut node = device_node!(id);
-
-        // Look for the id in the device tree. If it can be found, that means
-        // the device is being restored, otherwise it's created from scratch.
-        let region_range = if let Some(node) = self.device_tree.lock().unwrap().get(&id) {
-            info!("Restoring virtio-pmem {} resources", id);
-
-            let mut region_range: Option<(u64, u64)> = None;
-            for resource in node.resources.iter() {
-                match resource {
-                    Resource::MmioAddressRange { base, size } => {
-                        if region_range.is_some() {
-                            return Err(DeviceManagerError::ResourceAlreadyExists);
-                        }
-
-                        region_range = Some((*base, *size));
-                    }
-                    _ => {
-                        error!("Unexpected resource {:?} for {}", resource, id);
-                    }
-                }
-            }
-
-            if region_range.is_none() {
-                return Err(DeviceManagerError::MissingVirtioPmemResources);
-            }
-
-            region_range
-        } else {
-            None
-        };
-
-        let (custom_flags, set_len) = if pmem_cfg.file.is_dir() {
-            if pmem_cfg.size.is_none() {
-                return Err(DeviceManagerError::PmemWithDirectorySizeMissing);
-            }
-            (O_TMPFILE, true)
-        } else {
-            (0, false)
-        };
-
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(!pmem_cfg.discard_writes)
-            .custom_flags(custom_flags)
-            .open(&pmem_cfg.file)
-            .map_err(DeviceManagerError::PmemFileOpen)?;
-
-        let size = if let Some(size) = pmem_cfg.size {
-            if set_len {
-                file.set_len(size)
-                    .map_err(DeviceManagerError::PmemFileSetLen)?;
-            }
-            size
-        } else {
-            file.seek(SeekFrom::End(0))
-                .map_err(DeviceManagerError::PmemFileSetLen)?
-        };
-
-        if size % 0x20_0000 != 0 {
-            return Err(DeviceManagerError::PmemSizeNotAligned);
-        }
-
-        let (region_base, region_size) = if let Some((base, size)) = region_range {
-            // The memory needs to be 2MiB aligned in order to support
-            // hugepages.
-            self.pci_segments[pmem_cfg.pci_segment as usize]
-                .mem64_allocator
-                .lock()
-                .unwrap()
-                .allocate(
-                    Some(GuestAddress(base)),
-                    size as GuestUsize,
-                    Some(0x0020_0000),
-                )
-                .ok_or(DeviceManagerError::PmemRangeAllocation)?;
-
-            (base, size)
-        } else {
-            // The memory needs to be 2MiB aligned in order to support
-            // hugepages.
-            let base = self.pci_segments[pmem_cfg.pci_segment as usize]
-                .mem64_allocator
-                .lock()
-                .unwrap()
-                .allocate(None, size as GuestUsize, Some(0x0020_0000))
-                .ok_or(DeviceManagerError::PmemRangeAllocation)?;
-
-            (base.raw_value(), size)
-        };
-
-        let cloned_file = file.try_clone().map_err(DeviceManagerError::CloneFile)?;
-        let mmap_region = MmapRegion::build(
-            Some(FileOffset::new(cloned_file, 0)),
-            region_size as usize,
-            PROT_READ | PROT_WRITE,
-            MAP_NORESERVE
-                | if pmem_cfg.discard_writes {
-                    MAP_PRIVATE
-                } else {
-                    MAP_SHARED
-                },
-        )
-        .map_err(DeviceManagerError::NewMmapRegion)?;
-        let host_addr: u64 = mmap_region.as_ptr() as u64;
-
-        let mem_slot = self
-            .memory_manager
-            .lock()
-            .unwrap()
-            .create_userspace_mapping(region_base, region_size, host_addr, false, false, false)
-            .map_err(DeviceManagerError::MemoryManager)?;
-
-        let mapping = virtio_devices::UserspaceMapping {
-            host_addr,
-            mem_slot,
-            addr: GuestAddress(region_base),
-            len: region_size,
-            mergeable: false,
-        };
-
-        let virtio_pmem_device = Arc::new(Mutex::new(
-            virtio_devices::Pmem::new(
-                id.clone(),
-                file,
-                GuestAddress(region_base),
-                mapping,
-                mmap_region,
-                self.force_iommu | pmem_cfg.iommu,
-                self.seccomp_action.clone(),
-                self.exit_evt
-                    .try_clone()
-                    .map_err(DeviceManagerError::EventFd)?,
-                versioned_state_from_id(self.snapshot.as_ref(), id.as_str())
-                    .map_err(DeviceManagerError::RestoreGetState)?,
-            )
-            .map_err(DeviceManagerError::CreateVirtioPmem)?,
-        ));
-
-        // Update the device tree with correct resource information and with
-        // the migratable device.
-        node.resources.push(Resource::MmioAddressRange {
-            base: region_base,
-            size: region_size,
-        });
-        node.migratable = Some(Arc::clone(&virtio_pmem_device) as Arc<Mutex<dyn Migratable>>);
-        self.device_tree.lock().unwrap().insert(id.clone(), node);
-
-        Ok(MetaVirtioDevice {
-            virtio_device: Arc::clone(&virtio_pmem_device)
-                as Arc<Mutex<dyn virtio_devices::VirtioDevice>>,
-            iommu: pmem_cfg.iommu,
-            id,
-            pci_segment: pmem_cfg.pci_segment,
-            dma_handler: None,
-        })
-    }
-
-    fn make_virtio_pmem_devices(&mut self) -> DeviceManagerResult<Vec<MetaVirtioDevice>> {
-        let mut devices = Vec::new();
-        // Add virtio-pmem if required
-        let mut pmem_devices = self.config.lock().unwrap().pmem.clone();
-        if let Some(pmem_list_cfg) = &mut pmem_devices {
-            for pmem_cfg in pmem_list_cfg.iter_mut() {
-                devices.push(self.make_virtio_pmem_device(pmem_cfg)?);
-            }
-        }
-        self.config.lock().unwrap().pmem = pmem_devices;
 
         Ok(devices)
     }
@@ -3357,17 +3166,6 @@ impl DeviceManager {
         }
 
         let device = self.make_virtio_block_device(disk_cfg)?;
-        self.hotplug_virtio_pci_device(device)
-    }
-
-    pub fn add_pmem(&mut self, pmem_cfg: &mut PmemConfig) -> DeviceManagerResult<PciDeviceInfo> {
-        self.validate_identifier(&pmem_cfg.id)?;
-
-        if pmem_cfg.iommu && !self.is_iommu_segment(pmem_cfg.pci_segment) {
-            return Err(DeviceManagerError::InvalidIommuHotplug);
-        }
-
-        let device = self.make_virtio_pmem_device(pmem_cfg)?;
         self.hotplug_virtio_pci_device(device)
     }
 
