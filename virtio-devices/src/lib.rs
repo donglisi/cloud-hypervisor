@@ -22,7 +22,6 @@ use thiserror::Error;
 
 #[macro_use]
 mod device;
-pub mod balloon;
 pub mod block;
 mod console;
 pub mod epoll_helper;
@@ -33,7 +32,6 @@ mod thread_helper;
 pub mod transport;
 pub mod watchdog;
 
-pub use self::balloon::Balloon;
 pub use self::block::{Block, BlockState};
 pub use self::console::{Console, ConsoleResizer, Endpoint};
 pub use self::device::{

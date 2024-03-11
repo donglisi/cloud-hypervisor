@@ -1459,10 +1459,7 @@ impl RequestHandler for Vmm {
 
                 let config = Arc::clone(config);
 
-                let mut memory_actual_size = config.lock().unwrap().memory.total_size();
-                if let Some(vm) = &self.vm {
-                    memory_actual_size -= vm.balloon_size();
-                }
+                let memory_actual_size = config.lock().unwrap().memory.total_size();
 
                 let device_tree = self.vm.as_ref().map(|vm| vm.device_tree());
 
@@ -1512,38 +1509,6 @@ impl RequestHandler for Vmm {
         self.vm_delete()?;
         event!("vmm", "shutdown");
         Ok(())
-    }
-
-    fn vm_resize(
-        &mut self,
-        desired_vcpus: Option<u8>,
-        desired_ram: Option<u64>,
-        desired_balloon: Option<u64>,
-    ) -> result::Result<(), VmError> {
-        self.vm_config.as_ref().ok_or(VmError::VmNotCreated)?;
-
-        if let Some(ref mut vm) = self.vm {
-            if let Err(e) = vm.resize(desired_vcpus, desired_balloon) {
-                error!("Error when resizing VM: {:?}", e);
-                Err(e)
-            } else {
-                Ok(())
-            }
-        } else {
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap();
-            if let Some(desired_vcpus) = desired_vcpus {
-                config.cpus.boot_vcpus = desired_vcpus;
-            }
-            if let Some(desired_ram) = desired_ram {
-                config.memory.size = desired_ram;
-            }
-            if let Some(desired_balloon) = desired_balloon {
-                if let Some(balloon_config) = &mut config.balloon {
-                    balloon_config.size = desired_balloon;
-                }
-            }
-            Ok(())
-        }
     }
 
     fn vm_remove_device(&mut self, id: String) -> result::Result<(), VmError> {

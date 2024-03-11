@@ -112,12 +112,6 @@ pub enum ApiError {
     /// The VMM could not shutdown.
     VmmShutdown(VmError),
 
-    /// The VM could not be resized
-    VmResize(VmError),
-
-    /// The memory zone could not be resized.
-    VmResizeZone(VmError),
-
     /// The device could not be added to the VM.
     VmAddDevice(VmError),
 
@@ -184,8 +178,6 @@ impl Display for ApiError {
             VmRestore(vm_error) => write!(f, "{}", vm_error),
             VmCoredump(vm_error) => write!(f, "{}", vm_error),
             VmmShutdown(vm_error) => write!(f, "{}", vm_error),
-            VmResize(vm_error) => write!(f, "{}", vm_error),
-            VmResizeZone(vm_error) => write!(f, "{}", vm_error),
             VmAddDevice(vm_error) => write!(f, "{}", vm_error),
             VmAddUserDevice(vm_error) => write!(f, "{}", vm_error),
             VmRemoveDevice(vm_error) => write!(f, "{}", vm_error),
@@ -309,13 +301,6 @@ pub trait RequestHandler {
     fn vm_delete(&mut self) -> Result<(), VmError>;
 
     fn vmm_shutdown(&mut self) -> Result<(), VmError>;
-
-    fn vm_resize(
-        &mut self,
-        desired_vcpus: Option<u8>,
-        desired_ram: Option<u64>,
-        desired_balloon: Option<u64>,
-    ) -> Result<(), VmError>;
 
     fn vm_remove_device(&mut self, id: String) -> Result<(), VmError>;
 
@@ -839,47 +824,6 @@ impl ApiAction for VmRemoveDevice {
             let response = vmm
                 .vm_remove_device(remove_device_data.id)
                 .map_err(ApiError::VmRemoveDevice)
-                .map(|_| ApiResponsePayload::Empty);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
-
-pub struct VmResize;
-
-impl ApiAction for VmResize {
-    type RequestBody = VmResizeData;
-    type ResponseBody = Option<Body>;
-
-    fn request(
-        &self,
-        resize_data: Self::RequestBody,
-        response_sender: Sender<ApiResponse>,
-    ) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmResize {:?}", resize_data);
-
-            let response = vmm
-                .vm_resize(
-                    resize_data.desired_vcpus,
-                    resize_data.desired_ram,
-                    resize_data.desired_balloon,
-                )
-                .map_err(ApiError::VmResize)
                 .map(|_| ApiResponsePayload::Empty);
 
             response_sender

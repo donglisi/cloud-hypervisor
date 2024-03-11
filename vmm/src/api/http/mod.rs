@@ -9,7 +9,7 @@ use crate::api::VmCoredump;
 use crate::api::{
     AddDisk, ApiError, ApiRequest, VmAddNet,
     VmBoot, VmCounters, VmDelete, VmPause, VmPowerButton, VmReboot,
-    VmReceiveMigration, VmRemoveDevice, VmResize, VmRestore, VmResume,
+    VmReceiveMigration, VmRemoveDevice, VmRestore, VmResume,
     VmSendMigration, VmShutdown, VmSnapshot,
 };
 use crate::seccomp_filters::{get_seccomp_filter, Thread};
@@ -202,10 +202,6 @@ pub static HTTP_ROUTES: Lazy<HttpRoutes> = Lazy::new(|| {
     r.routes.insert(
         endpoint!("/vm.remove-device"),
         Box::new(VmActionHandler::new(&VmRemoveDevice)),
-    );
-    r.routes.insert(
-        endpoint!("/vm.resize"),
-        Box::new(VmActionHandler::new(&VmResize)),
     );
     r.routes.insert(
         endpoint!("/vm.restore"),

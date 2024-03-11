@@ -159,9 +159,6 @@ pub enum DeviceManagerError {
     /// Cannot create virtio-iommu device
     CreateVirtioIommu(io::Error),
 
-    /// Cannot create virtio-balloon device
-    CreateVirtioBalloon(io::Error),
-
     /// Cannot create virtio-watchdog device
     CreateVirtioWatchdog(io::Error),
 
@@ -354,12 +351,6 @@ pub enum DeviceManagerError {
 
     /// No socket option support for console device
     NoSocketOptionSupportForConsoleDevice,
-
-    /// Failed to resize virtio-balloon
-    VirtioBalloonResize(virtio_devices::balloon::Error),
-
-    /// Missing virtio-balloon, can't proceed as expected.
-    MissingVirtioBalloon,
 
     /// Missing virtual IOMMU device
     MissingVirtualIommu,
@@ -825,9 +816,6 @@ pub struct DeviceManager {
     // seccomp action
     seccomp_action: SeccompAction,
 
-    // Possible handle to the virtio-balloon device
-    balloon: Option<Arc<Mutex<virtio_devices::Balloon>>>,
-
     // Virtio Device activation EventFd to allow the VMM thread to trigger device
     // activation and thus start the threads from the VMM thread
     activate_evt: EventFd,
@@ -1067,7 +1055,6 @@ impl DeviceManager {
             #[cfg(target_arch = "aarch64")]
             id_to_dev_info: HashMap::new(),
             seccomp_action,
-            balloon: None,
             activate_evt: activate_evt
                 .try_clone()
                 .map_err(DeviceManagerError::EventFd)?,
@@ -3191,27 +3178,6 @@ impl DeviceManager {
         }
 
         counters
-    }
-
-    pub fn resize_balloon(&mut self, size: u64) -> DeviceManagerResult<()> {
-        if let Some(balloon) = &self.balloon {
-            return balloon
-                .lock()
-                .unwrap()
-                .resize(size)
-                .map_err(DeviceManagerError::VirtioBalloonResize);
-        }
-
-        warn!("No balloon setup: Can't resize the balloon");
-        Err(DeviceManagerError::MissingVirtioBalloon)
-    }
-
-    pub fn balloon_size(&self) -> u64 {
-        if let Some(balloon) = &self.balloon {
-            return balloon.lock().unwrap().get_actual();
-        }
-
-        0
     }
 
     pub fn device_tree(&self) -> Arc<Mutex<DeviceTree>> {

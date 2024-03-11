@@ -1307,49 +1307,6 @@ impl Vm {
         Ok(())
     }
 
-    pub fn resize(
-        &mut self,
-        desired_vcpus: Option<u8>,
-        desired_balloon: Option<u64>,
-    ) -> Result<()> {
-        event!("vm", "resizing");
-
-        if let Some(desired_vcpus) = desired_vcpus {
-            if self
-                .cpu_manager
-                .lock()
-                .unwrap()
-                .resize(desired_vcpus)
-                .map_err(Error::CpuManager)?
-            {
-                self.device_manager
-                    .lock()
-                    .unwrap()
-                    .notify_hotplug(AcpiNotificationFlags::CPU_DEVICES_CHANGED)
-                    .map_err(Error::DeviceManager)?;
-            }
-            self.config.lock().unwrap().cpus.boot_vcpus = desired_vcpus;
-        }
-
-        if let Some(desired_balloon) = desired_balloon {
-            self.device_manager
-                .lock()
-                .unwrap()
-                .resize_balloon(desired_balloon)
-                .map_err(Error::DeviceManager)?;
-
-            // Update the configuration value for the balloon size to ensure
-            // a reboot would use the right value.
-            if let Some(balloon_config) = &mut self.config.lock().unwrap().balloon {
-                balloon_config.size = desired_balloon;
-            }
-        }
-
-        event!("vm", "resized");
-
-        Ok(())
-    }
-
     pub fn remove_device(&mut self, id: String) -> Result<()> {
         self.device_manager
             .lock()
@@ -1906,11 +1863,6 @@ impl Vm {
             .try_read()
             .map_err(|_| Error::PoisonedState)
             .map(|state| *state)
-    }
-
-    /// Gets the actual size of the balloon.
-    pub fn balloon_size(&self) -> u64 {
-        self.device_manager.lock().unwrap().balloon_size()
     }
 
     pub fn send_memory_fds(
