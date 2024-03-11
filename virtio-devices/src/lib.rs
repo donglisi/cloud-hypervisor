@@ -26,7 +26,6 @@ pub mod balloon;
 pub mod block;
 mod console;
 pub mod epoll_helper;
-mod iommu;
 pub mod net;
 mod pmem;
 mod rng;
@@ -45,7 +44,6 @@ pub use self::device::{
 pub use self::epoll_helper::{
     EpollHelper, EpollHelperError, EpollHelperHandler, EPOLL_HELPER_EVENT_LAST,
 };
-pub use self::iommu::{AccessPlatformMapping, Iommu, IommuMapping};
 pub use self::net::{Net, NetCtrlEpollHandler};
 pub use self::pmem::Pmem;
 pub use self::rng::Rng;

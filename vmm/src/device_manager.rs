@@ -77,9 +77,9 @@ use tracer::trace_scoped;
 use virtio_devices::transport::VirtioTransport;
 use virtio_devices::transport::{VirtioPciDevice, VirtioPciDeviceActivator};
 use virtio_devices::{
-    AccessPlatformMapping, ActivateError,
+    ActivateError,
 };
-use virtio_devices::{Endpoint, IommuMapping};
+use virtio_devices::{Endpoint};
 use vm_allocator::{AddressAllocator, SystemAllocator};
 use vm_device::dma_mapping::ExternalDmaMapping;
 use vm_device::interrupt::{
@@ -807,10 +807,6 @@ pub struct DeviceManager {
     // Legacy Interrupt Manager
     legacy_interrupt_manager: Option<Arc<dyn InterruptManager<GroupConfig = LegacyIrqGroupConfig>>>,
 
-    // Paravirtualized IOMMU
-    iommu_device: Option<Arc<Mutex<virtio_devices::Iommu>>>,
-    iommu_mapping: Option<Arc<IommuMapping>>,
-
     // PCI information about devices attached to the paravirtualized IOMMU
     // It contains the virtual IOMMU PCI BDF along with the list of PCI BDF
     // representing the devices attached to the virtual IOMMU. This is useful
@@ -1065,8 +1061,6 @@ impl DeviceManager {
             device_id_cnt,
             msi_interrupt_manager,
             legacy_interrupt_manager: None,
-            iommu_device: None,
-            iommu_mapping: None,
             iommu_attached_devices: None,
             pci_segments,
             device_tree,
@@ -1232,20 +1226,6 @@ impl DeviceManager {
         }
     }
 
-    fn get_msi_iova_space(&mut self) -> (u64, u64) {
-        #[cfg(target_arch = "aarch64")]
-        {
-            let vcpus = self.config.lock().unwrap().cpus.boot_vcpus;
-            let vgic_config = gic::Gic::create_default_config(vcpus.into());
-            (
-                vgic_config.msi_addr,
-                vgic_config.msi_addr + vgic_config.msi_size - 1,
-            )
-        }
-        #[cfg(target_arch = "x86_64")]
-        (0xfee0_0000, 0xfeef_ffff)
-    }
-
     #[cfg(target_arch = "aarch64")]
     /// Gets the information of the devices registered up to some point in time.
     pub fn get_device_info(&self) -> &HashMap<(DeviceType, String), MmioDeviceInfo> {
@@ -1259,47 +1239,11 @@ impl DeviceManager {
     ) -> DeviceManagerResult<()> {
         let iommu_id = String::from(IOMMU_DEVICE_NAME);
 
-        let iommu_device = if self.config.lock().unwrap().iommu {
-            let (device, mapping) = virtio_devices::Iommu::new(
-                iommu_id.clone(),
-                self.seccomp_action.clone(),
-                self.exit_evt
-                    .try_clone()
-                    .map_err(DeviceManagerError::EventFd)?,
-                self.get_msi_iova_space(),
-                versioned_state_from_id(self.snapshot.as_ref(), iommu_id.as_str())
-                    .map_err(DeviceManagerError::RestoreGetState)?,
-            )
-            .map_err(DeviceManagerError::CreateVirtioIommu)?;
-            let device = Arc::new(Mutex::new(device));
-            self.iommu_device = Some(Arc::clone(&device));
-            self.iommu_mapping = Some(mapping);
-
-            // Fill the device tree with a new node. In case of restore, we
-            // know there is nothing to do, so we can simply override the
-            // existing entry.
-            self.device_tree
-                .lock()
-                .unwrap()
-                .insert(iommu_id.clone(), device_node!(iommu_id, device));
-
-            Some(device)
-        } else {
-            None
-        };
-
         let mut iommu_attached_devices = Vec::new();
         {
             for handle in virtio_devices {
-                let mapping: Option<Arc<IommuMapping>> = if handle.iommu {
-                    self.iommu_mapping.clone()
-                } else {
-                    None
-                };
-
                 let dev_id = self.add_virtio_pci_device(
                     handle.virtio_device,
-                    &mapping,
                     handle.id,
                     handle.pci_segment,
                     handle.dma_handler,
@@ -1322,11 +1266,6 @@ impl DeviceManager {
                         }
                     }
                 }
-            }
-
-            if let Some(iommu_device) = iommu_device {
-                let dev_id = self.add_virtio_pci_device(iommu_device, &None, iommu_id, 0, None)?;
-                self.iommu_attached_devices = Some((dev_id, iommu_attached_devices));
             }
         }
 
@@ -2901,7 +2840,6 @@ impl DeviceManager {
     fn add_virtio_pci_device(
         &mut self,
         virtio_device: Arc<Mutex<dyn virtio_devices::VirtioDevice>>,
-        iommu_mapping: &Option<Arc<IommuMapping>>,
         virtio_device_id: String,
         pci_segment_id: u16,
         dma_handler: Option<Arc<dyn ExternalDmaMapping>>,
@@ -2930,31 +2868,14 @@ impl DeviceManager {
         // Create the AccessPlatform trait from the implementation IommuMapping.
         // This will provide address translation for any virtio device sitting
         // behind a vIOMMU.
-        let access_platform: Option<Arc<dyn AccessPlatform>> = if let Some(mapping) = iommu_mapping
-        {
-            Some(Arc::new(AccessPlatformMapping::new(
-                pci_device_bdf.into(),
-                mapping.clone(),
-            )))
-        } else {
-            None
-        };
+        let access_platform: Option<Arc<dyn AccessPlatform>> = None;
 
         let memory = self.memory_manager.lock().unwrap().guest_memory();
 
         // Map DMA ranges if a DMA handler is available and if the device is
         // not attached to a virtual IOMMU.
         if let Some(dma_handler) = &dma_handler {
-            if iommu_mapping.is_some() {
-                if let Some(iommu) = &self.iommu_device {
-                    iommu
-                        .lock()
-                        .unwrap()
-                        .add_external_mapping(pci_device_bdf.into(), dma_handler.clone());
-                } else {
-                    return Err(DeviceManagerError::MissingVirtualIommu);
-                }
-            } else {
+            {
                 // Do not register virtio-mem regions, as they are handled directly by
                 // virtio-mem devices.
                 for (_, zone) in self.memory_manager.lock().unwrap().memory_zones().iter() {
@@ -3399,15 +3320,8 @@ impl DeviceManager {
         // for instance.
         self.virtio_devices.push(handle.clone());
 
-        let mapping: Option<Arc<IommuMapping>> = if handle.iommu {
-            self.iommu_mapping.clone()
-        } else {
-            None
-        };
-
         let bdf = self.add_virtio_pci_device(
             handle.virtio_device,
-            &mapping,
             handle.id.clone(),
             handle.pci_segment,
             handle.dma_handler,
