@@ -22,7 +22,6 @@ use crate::memory_manager::MemoryManager;
 #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
 use crate::migration::get_vm_snapshot;
 use crate::migration::{recv_vm_config, recv_vm_state};
-use crate::seccomp_filters::{get_seccomp_filter, Thread};
 use crate::vm::{Error as VmError, Vm, VmState};
 use anyhow::anyhow;
 #[cfg(feature = "dbus_api")]
@@ -60,7 +59,6 @@ use vmm_sys_util::sock_ctrl_msg::ScmSocket;
 
 mod acpi;
 pub mod api;
-mod clone3;
 pub mod config;
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 mod coredump;
@@ -75,9 +73,7 @@ pub mod interrupt;
 pub mod memory_manager;
 pub mod migration;
 mod pci_segment;
-pub mod seccomp_filters;
 mod serial_manager;
-mod sigwinch_listener;
 pub mod vm;
 pub mod vm_config;
 
@@ -321,55 +317,6 @@ pub fn feature_list() -> Vec<String> {
     ]
 }
 
-pub fn start_event_monitor_thread(
-    mut monitor: event_monitor::Monitor,
-    seccomp_action: &SeccompAction,
-    hypervisor_type: hypervisor::HypervisorType,
-    exit_event: EventFd,
-) -> Result<thread::JoinHandle<Result<()>>> {
-    // Retrieve seccomp filter
-    let seccomp_filter = get_seccomp_filter(seccomp_action, Thread::EventMonitor, hypervisor_type)
-        .map_err(Error::CreateSeccompFilter)?;
-
-    thread::Builder::new()
-        .name("event-monitor".to_owned())
-        .spawn(move || {
-            // Apply seccomp filter
-            if !seccomp_filter.is_empty() {
-                apply_filter(&seccomp_filter)
-                    .map_err(Error::ApplySeccompFilter)
-                    .map_err(|e| {
-                        error!("Error applying seccomp filter: {:?}", e);
-                        exit_event.write(1).ok();
-                        e
-                    })?;
-            }
-
-            std::panic::catch_unwind(AssertUnwindSafe(move || {
-                while let Ok(event) = monitor.rx.recv() {
-                    let event = Arc::new(event);
-
-                    if let Some(ref mut file) = monitor.file {
-                        file.write_all(event.as_bytes().as_ref()).ok();
-                        file.write_all(b"\n\n").ok();
-                    }
-
-                    for tx in monitor.broadcast.iter() {
-                        tx.send(event.clone()).ok();
-                    }
-                }
-            }))
-            .map_err(|_| {
-                error!("`event-monitor` thread panicked");
-                exit_event.write(1).ok();
-            })
-            .ok();
-
-            Ok(())
-        })
-        .map_err(Error::EventMonitorThreadSpawn)
-}
-
 #[allow(unused_variables)]
 #[allow(clippy::too_many_arguments)]
 pub fn start_vmm_thread(
@@ -399,21 +346,12 @@ pub fn start_vmm_thread(
     let api_event_clone = api_event.try_clone().map_err(Error::EventFdClone)?;
     let hypervisor_type = hypervisor.hypervisor_type();
 
-    // Retrieve seccomp filter
-    let vmm_seccomp_filter = get_seccomp_filter(seccomp_action, Thread::Vmm, hypervisor_type)
-        .map_err(Error::CreateSeccompFilter)?;
-
     let vmm_seccomp_action = seccomp_action.clone();
     let thread = {
         let exit_event = exit_event.try_clone().map_err(Error::EventFdClone)?;
         thread::Builder::new()
             .name("vmm".to_string())
             .spawn(move || {
-                // Apply seccomp filter for VMM thread.
-                if !vmm_seccomp_filter.is_empty() {
-                    apply_filter(&vmm_seccomp_filter).map_err(Error::ApplySeccompFilter)?;
-                }
-
                 let mut vmm = Vmm::new(
                     vmm_version,
                     api_event,
@@ -454,26 +392,6 @@ pub fn start_vmm_thread(
         }
         None => None,
     };
-
-    if let Some(http_path) = http_path {
-        api::start_http_path_thread(
-            http_path,
-            api_event_clone,
-            api_sender,
-            seccomp_action,
-            exit_event,
-            hypervisor_type,
-        )?;
-    } else if let Some(http_fd) = http_fd {
-        api::start_http_fd_thread(
-            http_fd,
-            api_event_clone,
-            api_sender,
-            seccomp_action,
-            exit_event,
-            hypervisor_type,
-        )?;
-    }
 
     #[cfg(feature = "guest_debug")]
     if let Some(debug_path) = debug_path {
@@ -589,25 +507,10 @@ impl Vmm {
                 let exit_evt = self.exit_evt.try_clone().map_err(Error::EventFdClone)?;
                 let original_termios_opt = Arc::clone(&self.original_termios_opt);
 
-                let signal_handler_seccomp_filter = get_seccomp_filter(
-                    &self.seccomp_action,
-                    Thread::SignalHandler,
-                    self.hypervisor.hypervisor_type(),
-                )
-                .map_err(Error::CreateSeccompFilter)?;
                 self.threads.push(
                     thread::Builder::new()
                         .name("vmm_signal_handler".to_string())
                         .spawn(move || {
-                            if !signal_handler_seccomp_filter.is_empty() {
-                                if let Err(e) = apply_filter(&signal_handler_seccomp_filter)
-                                    .map_err(Error::ApplySeccompFilter)
-                                {
-                                    error!("Error applying seccomp filter: {:?}", e);
-                                    exit_evt.write(1).ok();
-                                    return;
-                                }
-                            }
                             std::panic::catch_unwind(AssertUnwindSafe(|| {
                                 Vmm::signal_handler(signals, original_termios_opt, &exit_evt);
                             }))

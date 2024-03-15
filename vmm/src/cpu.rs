@@ -22,7 +22,6 @@ use crate::coredump::{
 use crate::gdb::{get_raw_tid, Debuggable, DebuggableError};
 #[cfg(target_arch = "x86_64")]
 use crate::memory_manager::MemoryManager;
-use crate::seccomp_filters::{get_seccomp_filter, Thread};
 #[cfg(target_arch = "x86_64")]
 use crate::vm::physical_bits;
 use crate::GuestMemoryMmap;
@@ -485,7 +484,6 @@ pub struct CpuManager {
     vcpu_states: Vec<VcpuState>,
     selected_cpu: u8,
     vcpus: Vec<Arc<Mutex<Vcpu>>>,
-    seccomp_action: SeccompAction,
     vm_ops: Arc<dyn VmOps>,
     #[cfg_attr(target_arch = "aarch64", allow(dead_code))]
     acpi_address: Option<GuestAddress>,
@@ -728,7 +726,6 @@ impl CpuManager {
             vm_debug_evt,
             selected_cpu: 0,
             vcpus: Vec::with_capacity(usize::from(config.max_vcpus)),
-            seccomp_action,
             vm_ops,
             acpi_address: None,
             proximity_domain_per_cpu,
@@ -955,14 +952,6 @@ impl CpuManager {
             cpuset
         });
 
-        // Retrieve seccomp filter for vcpu thread
-        let vcpu_seccomp_filter = get_seccomp_filter(
-            &self.seccomp_action,
-            Thread::Vcpu,
-            self.hypervisor.hypervisor_type(),
-        )
-        .map_err(Error::CreateSeccompFilter)?;
-
         #[cfg(target_arch = "x86_64")]
         let interrupt_controller_clone = self.interrupt_controller.as_ref().cloned();
 
@@ -993,15 +982,6 @@ impl CpuManager {
                         }
                     }
 
-                    // Apply seccomp filter for vcpu thread.
-                    if !vcpu_seccomp_filter.is_empty() {
-                        if let Err(e) =
-                            apply_filter(&vcpu_seccomp_filter).map_err(Error::ApplySeccompFilter)
-                        {
-                            error!("Error applying seccomp filter: {:?}", e);
-                            return;
-                        }
-                    }
                     extern "C" fn handle_signal(_: i32, _: *mut siginfo_t, _: *mut c_void) {}
                     // This uses an async signal safe handler to kill the vcpu handles.
                     register_signal_handler(SIGRTMIN(), handle_signal)

@@ -31,12 +31,9 @@
 
 #[cfg(feature = "dbus_api")]
 pub mod dbus;
-pub mod http;
 
 #[cfg(feature = "dbus_api")]
 pub use self::dbus::start_dbus_thread;
-pub use self::http::start_http_fd_thread;
-pub use self::http::start_http_path_thread;
 
 use crate::config::{
     DiskConfig, NetConfig, RestoreConfig,

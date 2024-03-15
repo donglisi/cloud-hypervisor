@@ -13,8 +13,7 @@ use option_parser::OptionParser;
 use seccompiler::SeccompAction;
 use signal_hook::consts::SIGSYS;
 use std::env;
-use std::fs::File;
-use std::os::unix::io::{FromRawFd, RawFd};
+use std::os::unix::io::{RawFd};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -58,20 +57,12 @@ enum Error {
     VmmThread(#[source] vmm::Error),
     #[error("Error parsing --api-socket: {0}")]
     ParsingApiSocket(std::num::ParseIntError),
-    #[error("Error parsing --event-monitor: {0}")]
-    ParsingEventMonitor(option_parser::OptionParserError),
     #[cfg(feature = "dbus_api")]
     #[error("`--dbus-object-path` option isn't provided")]
     MissingDBusObjectPath,
     #[cfg(feature = "dbus_api")]
     #[error("`--dbus-service-name` option isn't provided")]
     MissingDBusServiceName,
-    #[error("Error parsing --event-monitor: path or fd required")]
-    BareEventMonitor,
-    #[error("Error doing event monitor I/O: {0}")]
-    EventMonitorIo(std::io::Error),
-    #[error("Event monitor thread failed: {0}")]
-    EventMonitorThread(#[source] vmm::Error),
     #[cfg(feature = "guest_debug")]
     #[error("Error parsing --gdb: {0}")]
     ParsingGdb(option_parser::OptionParserError),
@@ -599,43 +590,6 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
 
     let exit_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateExitEventFd)?;
 
-    #[allow(unused_mut)]
-    let mut event_monitor = cmd_arguments
-        .get_one::<String>("event-monitor")
-        .as_ref()
-        .map(|monitor_config| {
-            let mut parser = OptionParser::new();
-            parser.add("path").add("fd");
-            parser
-                .parse(monitor_config)
-                .map_err(Error::ParsingEventMonitor)?;
-
-            if parser.is_set("fd") {
-                let fd = parser
-                    .convert("fd")
-                    .map_err(Error::ParsingEventMonitor)?
-                    .unwrap();
-                // SAFETY: fd is valid
-                Ok(Some(unsafe { File::from_raw_fd(fd) }))
-            } else if parser.is_set("path") {
-                Ok(Some(
-                    std::fs::OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .truncate(true)
-                        .open(parser.get("path").unwrap())
-                        .map_err(Error::EventMonitorIo)?,
-                ))
-            } else {
-                Err(Error::BareEventMonitor)
-            }
-        })
-        .transpose()?
-        .map(|event_monitor_file| {
-            event_monitor::set_monitor(event_monitor_file).map_err(Error::EventMonitorIo)
-        })
-        .transpose()?;
-
     #[cfg(feature = "dbus_api")]
     let dbus_options = match (
         cmd_arguments.get_one::<String>("dbus-service-name"),
@@ -662,16 +616,6 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
         (None, Some(_)) => Err(Error::MissingDBusServiceName),
         (None, None) => Ok(None),
     }?;
-
-    if let Some(monitor) = event_monitor {
-        vmm::start_event_monitor_thread(
-            monitor,
-            &seccomp_action,
-            hypervisor.hypervisor_type(),
-            exit_evt.try_clone().unwrap(),
-        )
-        .map_err(Error::EventMonitorThread)?;
-    }
 
     event!("vmm", "starting");
 

@@ -19,9 +19,7 @@ use crate::interrupt::LegacyUserspaceInterruptManager;
 use crate::interrupt::MsiInterruptManager;
 use crate::memory_manager::{Error as MemoryManagerError, MemoryManager, MEMORY_MANAGER_ACPI_SIZE};
 use crate::pci_segment::PciSegment;
-use crate::seccomp_filters::{get_seccomp_filter, Thread};
 use crate::serial_manager::{Error as SerialManagerError, SerialManager};
-use crate::sigwinch_listener::start_sigwinch_listener;
 use crate::GuestRegionMmap;
 use crate::PciDeviceInfo;
 use crate::{device_node, DEVICE_MANAGER_SNAPSHOT_ID};
@@ -716,9 +714,6 @@ pub struct AcpiPlatformAddresses {
 }
 
 pub struct DeviceManager {
-    // The underlying hypervisor
-    hypervisor_type: HypervisorType,
-
     // Manage address space related to devices
     address_manager: Arc<AddressManager>,
 
@@ -1023,7 +1018,6 @@ impl DeviceManager {
         }
 
         let device_manager = DeviceManager {
-            hypervisor_type,
             address_manager: Arc::clone(&address_manager),
             console: Arc::new(Console::default()),
             interrupt_controller: None,
@@ -1830,16 +1824,6 @@ impl DeviceManager {
     }
 
     fn listen_for_sigwinch_on_tty(&mut self, pty_sub: File) -> std::io::Result<()> {
-        let seccomp_filter = get_seccomp_filter(
-            &self.seccomp_action,
-            Thread::PtyForeground,
-            self.hypervisor_type,
-        )
-        .unwrap();
-
-        self.console_resize_pipe =
-            Some(Arc::new(start_sigwinch_listener(seccomp_filter, pty_sub)?));
-
         Ok(())
     }
 
