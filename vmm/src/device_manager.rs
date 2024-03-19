@@ -49,7 +49,7 @@ use devices::legacy::Pl011;
 use devices::{
     interrupt_controller, interrupt_controller::InterruptController, AcpiNotificationFlags,
 };
-use hypervisor::{HypervisorType, IoEventAddress};
+use hypervisor::{IoEventAddress};
 use libc::{
     cfmakeraw, isatty, tcgetattr, tcsetattr, termios,
     TCSANOW,
@@ -848,7 +848,6 @@ impl DeviceManager {
     pub fn new(
         #[cfg(target_arch = "x86_64")] io_bus: Arc<Bus>,
         mmio_bus: Arc<Bus>,
-        hypervisor_type: HypervisorType,
         vm: Arc<dyn hypervisor::Vm>,
         config: Arc<Mutex<VmConfig>>,
         memory_manager: Arc<Mutex<MemoryManager>>,
@@ -1823,9 +1822,6 @@ impl DeviceManager {
         self.modify_mode(f.as_raw_fd(), |t| unsafe { cfmakeraw(t) })
     }
 
-    fn listen_for_sigwinch_on_tty(&mut self, pty_sub: File) -> std::io::Result<()> {
-        Ok(())
-    }
 
     fn add_virtio_console_device(
         &mut self,
@@ -1855,7 +1851,6 @@ impl DeviceManager {
                     self.config.lock().unwrap().console.file = Some(path.clone());
                     let file = main.try_clone().unwrap();
                     assert!(resize_pipe.is_none());
-                    self.listen_for_sigwinch_on_tty(sub).unwrap();
                     self.console_pty = Some(Arc::new(Mutex::new(PtyPair { main, path })));
                     Endpoint::PtyPair(file.try_clone().unwrap(), file)
                 }
@@ -1875,11 +1870,6 @@ impl DeviceManager {
                 // Make sure stdout is in raw mode, if it's a terminal.
                 let _ = self.set_raw_mode(&stdout);
 
-                // SAFETY: FFI call. Trivially safe.
-                if unsafe { libc::isatty(libc::STDOUT_FILENO) } == 1 {
-                    self.listen_for_sigwinch_on_tty(stdout.try_clone().unwrap())
-                        .unwrap();
-                }
 
                 // If an interactive TTY then we can accept input
                 // SAFETY: FFI call. Trivially safe.

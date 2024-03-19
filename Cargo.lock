@@ -89,13 +89,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "080e9890a082662b09c1ad45f567faeeb47f22b5fb23895fbe1e651e718e25ca"
 
 [[package]]
-name = "api_client"
-version = "0.1.0"
-dependencies = [
- "vmm-sys-util",
-]
-
-[[package]]
 name = "arc-swap"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -442,7 +435,6 @@ name = "cloud-hypervisor"
 version = "38.0.0"
 dependencies = [
  "anyhow",
- "api_client",
  "clap",
  "dhat",
  "dirs",
