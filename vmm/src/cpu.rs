@@ -415,6 +415,7 @@ impl Vcpu {
             .map_err(Error::VcpuArmPreferredTarget)?;
         // We already checked that the capability is supported.
         kvi.features[0] |= 1 << kvm_bindings::KVM_ARM_VCPU_PSCI_0_2;
+        kvi.features[0] |= 1 << kvm_bindings::KVM_ARM_VCPU_HAS_EL2;
         if vm
             .as_any()
             .downcast_ref::<hypervisor::kvm::KvmVm>()
