@@ -88,7 +88,6 @@ members = [
     "option_parser",
     "pci",
     "performance-metrics",
-    "rate_limiter",
     "serial_buffer",
     "tracer",
     "virtio-devices",

@@ -8,7 +8,7 @@
 use super::Error as DeviceError;
 use super::{
     ActivateError, ActivateResult, EpollHelper, EpollHelperError, EpollHelperHandler,
-    RateLimiterConfig, VirtioCommon, VirtioDevice, VirtioDeviceType, VirtioInterruptType,
+    VirtioCommon, VirtioDevice, VirtioDeviceType, VirtioInterruptType,
     EPOLL_HELPER_EVENT_LAST,
 };
 use crate::seccomp_filters::Thread;
@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::vec::Vec;
-use std::{collections::HashMap, convert::TryInto};
+use std::{collections::HashMap};
 use thiserror::Error;
 use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
@@ -202,14 +202,8 @@ impl NetEpollHandler {
 
         self.net.rx_desc_avail = true;
 
-        let rate_limit_reached = self
-            .net
-            .rx_rate_limiter
-            .as_ref()
-            .map_or(false, |r| r.is_blocked());
-
         // Start to listen on RX_TAP_EVENT only when the rate limit is not reached
-        if !self.net.rx_tap_listening && !rate_limit_reached {
+        if !self.net.rx_tap_listening {
             net_util::register_listener(
                 self.net.epoll_fd.unwrap(),
                 self.net.tap.as_raw_fd(),
@@ -239,16 +233,7 @@ impl NetEpollHandler {
     }
 
     fn handle_tx_event(&mut self) -> result::Result<(), DeviceError> {
-        let rate_limit_reached = self
-            .net
-            .tx_rate_limiter
-            .as_ref()
-            .map_or(false, |r| r.is_blocked());
-
-        if !rate_limit_reached {
-            self.process_tx()?;
-        }
-
+        self.process_tx()?;
         Ok(())
     }
 
@@ -275,12 +260,6 @@ impl NetEpollHandler {
         let mut helper = EpollHelper::new(&self.kill_evt, &self.pause_evt)?;
         helper.add_event(self.queue_evt_pair.0.as_raw_fd(), RX_QUEUE_EVENT)?;
         helper.add_event(self.queue_evt_pair.1.as_raw_fd(), TX_QUEUE_EVENT)?;
-        if let Some(rate_limiter) = &self.net.rx_rate_limiter {
-            helper.add_event(rate_limiter.as_raw_fd(), RX_RATE_LIMITER_EVENT)?;
-        }
-        if let Some(rate_limiter) = &self.net.tx_rate_limiter {
-            helper.add_event(rate_limiter.as_raw_fd(), TX_RATE_LIMITER_EVENT)?;
-        }
 
         let mem = self.mem.memory();
         // If there are some already available descriptors on the RX queue,
@@ -347,60 +326,6 @@ impl EpollHelperHandler for NetEpollHandler {
                     EpollHelperError::HandleEvent(anyhow!("Error processing tap queue: {:?}", e))
                 })?;
             }
-            RX_RATE_LIMITER_EVENT => {
-                if let Some(rate_limiter) = &mut self.net.rx_rate_limiter {
-                    // Upon rate limiter event, call the rate limiter handler and register the
-                    // TAP fd for further processing if some RX buffers are available
-                    rate_limiter.event_handler().map_err(|e| {
-                        EpollHelperError::HandleEvent(anyhow!(
-                            "Error from 'rate_limiter.event_handler()': {:?}",
-                            e
-                        ))
-                    })?;
-
-                    if !self.net.rx_tap_listening && self.net.rx_desc_avail {
-                        net_util::register_listener(
-                            self.net.epoll_fd.unwrap(),
-                            self.net.tap.as_raw_fd(),
-                            epoll::Events::EPOLLIN,
-                            u64::from(self.net.tap_rx_event_id),
-                        )
-                        .map_err(|e| {
-                            EpollHelperError::HandleEvent(anyhow!(
-                                "Error register_listener with `RX_RATE_LIMITER_EVENT`: {:?}",
-                                e
-                            ))
-                        })?;
-
-                        self.net.rx_tap_listening = true;
-                    }
-                } else {
-                    return Err(EpollHelperError::HandleEvent(anyhow!(
-                        "Unexpected RX_RATE_LIMITER_EVENT"
-                    )));
-                }
-            }
-            TX_RATE_LIMITER_EVENT => {
-                if let Some(rate_limiter) = &mut self.net.tx_rate_limiter {
-                    // Upon rate limiter event, call the rate limiter handler
-                    // and restart processing the queue.
-                    rate_limiter.event_handler().map_err(|e| {
-                        EpollHelperError::HandleEvent(anyhow!(
-                            "Error from 'rate_limiter.event_handler()': {:?}",
-                            e
-                        ))
-                    })?;
-
-                    self.driver_awake = true;
-                    self.process_tx().map_err(|e| {
-                        EpollHelperError::HandleEvent(anyhow!("Error processing TX queue: {:?}", e))
-                    })?;
-                } else {
-                    return Err(EpollHelperError::HandleEvent(anyhow!(
-                        "Unexpected TX_RATE_LIMITER_EVENT"
-                    )));
-                }
-            }
             _ => {
                 return Err(EpollHelperError::HandleEvent(anyhow!(
                     "Unexpected event: {}",
@@ -420,7 +345,6 @@ pub struct Net {
     ctrl_queue_epoll_thread: Option<thread::JoinHandle<()>>,
     counters: NetCounters,
     seccomp_action: SeccompAction,
-    rate_limiter_config: Option<RateLimiterConfig>,
     exit_evt: EventFd,
 }
 
@@ -445,7 +369,6 @@ impl Net {
         num_queues: usize,
         queue_size: u16,
         seccomp_action: SeccompAction,
-        rate_limiter_config: Option<RateLimiterConfig>,
         exit_evt: EventFd,
         state: Option<NetState>,
         offload_tso: bool,
@@ -541,7 +464,6 @@ impl Net {
             ctrl_queue_epoll_thread: None,
             counters: NetCounters::default(),
             seccomp_action,
-            rate_limiter_config,
             exit_evt,
         })
     }
@@ -561,7 +483,6 @@ impl Net {
         num_queues: usize,
         queue_size: u16,
         seccomp_action: SeccompAction,
-        rate_limiter_config: Option<RateLimiterConfig>,
         exit_evt: EventFd,
         state: Option<NetState>,
         offload_tso: bool,
@@ -587,7 +508,6 @@ impl Net {
             num_queues,
             queue_size,
             seccomp_action,
-            rate_limiter_config,
             exit_evt,
             state,
             offload_tso,
@@ -605,7 +525,6 @@ impl Net {
         iommu: bool,
         queue_size: u16,
         seccomp_action: SeccompAction,
-        rate_limiter_config: Option<RateLimiterConfig>,
         exit_evt: EventFd,
         state: Option<NetState>,
         offload_tso: bool,
@@ -640,7 +559,6 @@ impl Net {
             num_queue_pairs * 2,
             queue_size,
             seccomp_action,
-            rate_limiter_config,
             exit_evt,
             state,
             offload_tso,
@@ -766,18 +684,6 @@ impl VirtioDevice for Net {
 
             let (kill_evt, pause_evt) = self.common.dup_eventfds();
 
-            let rx_rate_limiter: Option<rate_limiter::RateLimiter> = self
-                .rate_limiter_config
-                .map(RateLimiterConfig::try_into)
-                .transpose()
-                .map_err(ActivateError::CreateRateLimiter)?;
-
-            let tx_rate_limiter: Option<rate_limiter::RateLimiter> = self
-                .rate_limiter_config
-                .map(RateLimiterConfig::try_into)
-                .transpose()
-                .map_err(ActivateError::CreateRateLimiter)?;
-
             let tap = taps.remove(0);
             #[cfg(not(fuzzing))]
             tap.set_offload(virtio_features_to_tap_offload(self.common.acked_features))
@@ -799,8 +705,6 @@ impl VirtioDevice for Net {
                     tap_rx_event_id: RX_TAP_EVENT,
                     tap_tx_event_id: TX_TAP_EVENT,
                     rx_desc_avail: false,
-                    rx_rate_limiter,
-                    tx_rate_limiter,
                     access_platform: self.common.access_platform.clone(),
                 },
                 mem: mem.clone(),

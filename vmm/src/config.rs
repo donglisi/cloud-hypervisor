@@ -16,7 +16,6 @@ use std::path::PathBuf;
 use std::result;
 use std::str::FromStr;
 use thiserror::Error;
-use virtio_devices::{RateLimiterConfig, TokenBucketConfig};
 
 const MAX_NUM_PCI_SEGMENTS: u16 = 96;
 
@@ -410,7 +409,6 @@ pub struct VmParams<'a> {
     pub kernel: Option<&'a str>,
     pub initramfs: Option<&'a str>,
     pub cmdline: Option<&'a str>,
-    pub rate_limit_groups: Option<Vec<&'a str>>,
     pub disks: Option<Vec<&'a str>>,
     pub net: Option<Vec<&'a str>>,
     pub rng: &'a str,
@@ -452,9 +450,6 @@ impl<'a> VmParams<'a> {
         let kernel = args.get_one::<String>("kernel").map(|x| x as &str);
         let initramfs = args.get_one::<String>("initramfs").map(|x| x as &str);
         let cmdline = args.get_one::<String>("cmdline").map(|x| x as &str);
-        let rate_limit_groups: Option<Vec<&str>> = args
-            .get_many::<String>("rate-limit-group")
-            .map(|x| x.map(|y| y as &str).collect());
         let disks: Option<Vec<&str>> = args
             .get_many::<String>("disk")
             .map(|x| x.map(|y| y as &str).collect());
@@ -504,7 +499,6 @@ impl<'a> VmParams<'a> {
             kernel,
             initramfs,
             cmdline,
-            rate_limit_groups,
             disks,
             net,
             rng,
@@ -907,93 +901,6 @@ impl MemoryConfig {
     }
 }
 
-impl RateLimiterGroupConfig {
-    pub const SYNTAX: &'static str = "Rate Limit Group parameters \
-        \"bw_size=<bytes>,bw_one_time_burst=<bytes>,bw_refill_time=<ms>,\
-        ops_size=<io_ops>,ops_one_time_burst=<io_ops>,ops_refill_time=<ms>,\
-        id=<device_id>\"";
-
-    pub fn parse(rate_limit_group: &str) -> Result<Self> {
-        let mut parser = OptionParser::new();
-        parser
-            .add("bw_size")
-            .add("bw_one_time_burst")
-            .add("bw_refill_time")
-            .add("ops_size")
-            .add("ops_one_time_burst")
-            .add("ops_refill_time")
-            .add("id");
-        parser
-            .parse(rate_limit_group)
-            .map_err(Error::ParseRateLimiterGroup)?;
-
-        let id = parser.get("id").unwrap_or_default();
-        let bw_size = parser
-            .convert("bw_size")
-            .map_err(Error::ParseRateLimiterGroup)?
-            .unwrap_or_default();
-        let bw_one_time_burst = parser
-            .convert("bw_one_time_burst")
-            .map_err(Error::ParseRateLimiterGroup)?
-            .unwrap_or_default();
-        let bw_refill_time = parser
-            .convert("bw_refill_time")
-            .map_err(Error::ParseRateLimiterGroup)?
-            .unwrap_or_default();
-        let ops_size = parser
-            .convert("ops_size")
-            .map_err(Error::ParseRateLimiterGroup)?
-            .unwrap_or_default();
-        let ops_one_time_burst = parser
-            .convert("ops_one_time_burst")
-            .map_err(Error::ParseRateLimiterGroup)?
-            .unwrap_or_default();
-        let ops_refill_time = parser
-            .convert("ops_refill_time")
-            .map_err(Error::ParseRateLimiterGroup)?
-            .unwrap_or_default();
-
-        let bw_tb_config = if bw_size != 0 && bw_refill_time != 0 {
-            Some(TokenBucketConfig {
-                size: bw_size,
-                one_time_burst: Some(bw_one_time_burst),
-                refill_time: bw_refill_time,
-            })
-        } else {
-            None
-        };
-        let ops_tb_config = if ops_size != 0 && ops_refill_time != 0 {
-            Some(TokenBucketConfig {
-                size: ops_size,
-                one_time_burst: Some(ops_one_time_burst),
-                refill_time: ops_refill_time,
-            })
-        } else {
-            None
-        };
-
-        Ok(RateLimiterGroupConfig {
-            id,
-            rate_limiter_config: RateLimiterConfig {
-                bandwidth: bw_tb_config,
-                ops: ops_tb_config,
-            },
-        })
-    }
-
-    pub fn validate(&self, _vm_config: &VmConfig) -> ValidationResult<()> {
-        if self.rate_limiter_config.bandwidth.is_none() && self.rate_limiter_config.ops.is_none() {
-            return Err(ValidationError::InvalidRateLimiterGroup);
-        }
-
-        if self.id.is_empty() {
-            return Err(ValidationError::InvalidRateLimiterGroup);
-        }
-
-        Ok(())
-    }
-}
-
 impl DiskConfig {
     pub const SYNTAX: &'static str = "Disk parameters \
          \"path=<disk_image_path>,readonly=on|off,direct=on|off,iommu=on|off,\
@@ -1001,7 +908,7 @@ impl DiskConfig {
          vhost_user=on|off,socket=<vhost_user_socket_path>,\
          bw_size=<bytes>,bw_one_time_burst=<bytes>,bw_refill_time=<ms>,\
          ops_size=<io_ops>,ops_one_time_burst=<io_ops>,ops_refill_time=<ms>,\
-         id=<device_id>,pci_segment=<segment_id>,rate_limit_group=<group_id>,\
+         id=<device_id>,pci_segment=<segment_id>,\
          queue_affinity=<list_of_queue_indices_with_their_associated_cpuset>";
 
     pub fn parse(disk: &str) -> Result<Self> {
@@ -1026,7 +933,6 @@ impl DiskConfig {
             .add("_disable_aio")
             .add("pci_segment")
             .add("serial")
-            .add("rate_limit_group")
             .add("queue_affinity");
         parser.parse(disk).map_err(Error::ParseDisk)?;
 
@@ -1075,31 +981,6 @@ impl DiskConfig {
             .convert("pci_segment")
             .map_err(Error::ParseDisk)?
             .unwrap_or_default();
-        let rate_limit_group = parser.get("rate_limit_group");
-        let bw_size = parser
-            .convert("bw_size")
-            .map_err(Error::ParseDisk)?
-            .unwrap_or_default();
-        let bw_one_time_burst = parser
-            .convert("bw_one_time_burst")
-            .map_err(Error::ParseDisk)?
-            .unwrap_or_default();
-        let bw_refill_time = parser
-            .convert("bw_refill_time")
-            .map_err(Error::ParseDisk)?
-            .unwrap_or_default();
-        let ops_size = parser
-            .convert("ops_size")
-            .map_err(Error::ParseDisk)?
-            .unwrap_or_default();
-        let ops_one_time_burst = parser
-            .convert("ops_one_time_burst")
-            .map_err(Error::ParseDisk)?
-            .unwrap_or_default();
-        let ops_refill_time = parser
-            .convert("ops_refill_time")
-            .map_err(Error::ParseDisk)?
-            .unwrap_or_default();
         let serial = parser.get("serial");
         let queue_affinity = parser
             .convert::<Tuple<u16, Vec<usize>>>("queue_affinity")
@@ -1112,32 +993,6 @@ impl DiskConfig {
                     })
                     .collect()
             });
-        let bw_tb_config = if bw_size != 0 && bw_refill_time != 0 {
-            Some(TokenBucketConfig {
-                size: bw_size,
-                one_time_burst: Some(bw_one_time_burst),
-                refill_time: bw_refill_time,
-            })
-        } else {
-            None
-        };
-        let ops_tb_config = if ops_size != 0 && ops_refill_time != 0 {
-            Some(TokenBucketConfig {
-                size: ops_size,
-                one_time_burst: Some(ops_one_time_burst),
-                refill_time: ops_refill_time,
-            })
-        } else {
-            None
-        };
-        let rate_limiter_config = if bw_tb_config.is_some() || ops_tb_config.is_some() {
-            Some(RateLimiterConfig {
-                bandwidth: bw_tb_config,
-                ops: ops_tb_config,
-            })
-        } else {
-            None
-        };
 
         Ok(DiskConfig {
             path,
@@ -1148,8 +1003,6 @@ impl DiskConfig {
             queue_size,
             vhost_user,
             vhost_socket,
-            rate_limit_group,
-            rate_limiter_config,
             id,
             disable_io_uring,
             disable_aio,
@@ -1179,11 +1032,6 @@ impl DiskConfig {
                 }
             }
         }
-
-        if self.rate_limiter_config.is_some() && self.rate_limit_group.is_some() {
-            return Err(ValidationError::InvalidRateLimiterGroup);
-        }
-
         Ok(())
     }
 }
@@ -1306,56 +1154,6 @@ impl NetConfig {
             .convert("pci_segment")
             .map_err(Error::ParseNetwork)?
             .unwrap_or_default();
-        let bw_size = parser
-            .convert("bw_size")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or_default();
-        let bw_one_time_burst = parser
-            .convert("bw_one_time_burst")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or_default();
-        let bw_refill_time = parser
-            .convert("bw_refill_time")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or_default();
-        let ops_size = parser
-            .convert("ops_size")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or_default();
-        let ops_one_time_burst = parser
-            .convert("ops_one_time_burst")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or_default();
-        let ops_refill_time = parser
-            .convert("ops_refill_time")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or_default();
-        let bw_tb_config = if bw_size != 0 && bw_refill_time != 0 {
-            Some(TokenBucketConfig {
-                size: bw_size,
-                one_time_burst: Some(bw_one_time_burst),
-                refill_time: bw_refill_time,
-            })
-        } else {
-            None
-        };
-        let ops_tb_config = if ops_size != 0 && ops_refill_time != 0 {
-            Some(TokenBucketConfig {
-                size: ops_size,
-                one_time_burst: Some(ops_one_time_burst),
-                refill_time: ops_refill_time,
-            })
-        } else {
-            None
-        };
-        let rate_limiter_config = if bw_tb_config.is_some() || ops_tb_config.is_some() {
-            Some(RateLimiterConfig {
-                bandwidth: bw_tb_config,
-                ops: ops_tb_config,
-            })
-        } else {
-            None
-        };
 
         let config = NetConfig {
             tap,
@@ -1372,7 +1170,6 @@ impl NetConfig {
             vhost_mode,
             id,
             fds,
-            rate_limiter_config,
             pci_segment,
             offload_tso,
             offload_ufo,
@@ -2175,14 +1972,6 @@ impl VmConfig {
             return Err(ValidationError::CpusMaxLowerThanBoot);
         }
 
-        if let Some(rate_limit_groups) = &self.rate_limit_groups {
-            for rate_limit_group in rate_limit_groups {
-                rate_limit_group.validate(self)?;
-
-                Self::validate_identifier(&mut id_list, &Some(rate_limit_group.id.clone()))?;
-            }
-        }
-
         if let Some(disks) = &self.disks {
             for disk in disks {
                 if disk.vhost_socket.as_ref().and(disk.path.as_ref()).is_some() {
@@ -2193,18 +1982,6 @@ impl VmConfig {
                 }
                 if disk.vhost_user && disk.vhost_socket.is_none() {
                     return Err(ValidationError::VhostUserMissingSocket);
-                }
-                if let Some(rate_limit_group) = &disk.rate_limit_group {
-                    if let Some(rate_limit_groups) = &self.rate_limit_groups {
-                        if !rate_limit_groups
-                            .iter()
-                            .any(|cfg| &cfg.id == rate_limit_group)
-                        {
-                            return Err(ValidationError::InvalidRateLimiterGroup);
-                        }
-                    } else {
-                        return Err(ValidationError::InvalidRateLimiterGroup);
-                    }
                 }
 
                 disk.validate(self)?;
@@ -2421,16 +2198,6 @@ impl VmConfig {
     }
 
     pub fn parse(vm_params: VmParams) -> Result<Self> {
-        let mut rate_limit_groups: Option<Vec<RateLimiterGroupConfig>> = None;
-        if let Some(rate_limit_group_list) = &vm_params.rate_limit_groups {
-            let mut rate_limit_group_config_list = Vec::new();
-            for item in rate_limit_group_list.iter() {
-                let rate_limit_group_config = RateLimiterGroupConfig::parse(item)?;
-                rate_limit_group_config_list.push(rate_limit_group_config);
-            }
-            rate_limit_groups = Some(rate_limit_group_config_list);
-        }
-
         let mut disks: Option<Vec<DiskConfig>> = None;
         if let Some(disk_list) = &vm_params.disks {
             let mut disk_config_list = Vec::new();
@@ -2579,7 +2346,6 @@ impl VmConfig {
             cpus: CpusConfig::parse(vm_params.cpus)?,
             memory: MemoryConfig::parse(vm_params.memory, vm_params.memory_zones)?,
             payload,
-            rate_limit_groups,
             disks,
             net,
             rng,
@@ -2705,7 +2471,6 @@ impl Clone for VmConfig {
             cpus: self.cpus.clone(),
             memory: self.memory.clone(),
             payload: self.payload.clone(),
-            rate_limit_groups: self.rate_limit_groups.clone(),
             disks: self.disks.clone(),
             net: self.net.clone(),
             rng: self.rng.clone(),
@@ -2886,39 +2651,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_rate_limit_group_parsing() -> Result<()> {
-        assert_eq!(
-            RateLimiterGroupConfig::parse("id=group0,bw_size=1000,bw_refill_time=100")?,
-            RateLimiterGroupConfig {
-                id: "group0".to_string(),
-                rate_limiter_config: RateLimiterConfig {
-                    bandwidth: Some(TokenBucketConfig {
-                        size: 1000,
-                        one_time_burst: Some(0),
-                        refill_time: 100,
-                    }),
-                    ops: None,
-                }
-            }
-        );
-        assert_eq!(
-            RateLimiterGroupConfig::parse("id=group0,ops_size=1000,ops_refill_time=100")?,
-            RateLimiterGroupConfig {
-                id: "group0".to_string(),
-                rate_limiter_config: RateLimiterConfig {
-                    bandwidth: None,
-                    ops: Some(TokenBucketConfig {
-                        size: 1000,
-                        one_time_burst: Some(0),
-                        refill_time: 100,
-                    }),
-                }
-            }
-        );
-        Ok(())
-    }
-
     fn disk_fixture() -> DiskConfig {
         DiskConfig {
             path: Some(PathBuf::from("/path/to_file")),
@@ -2932,8 +2664,6 @@ mod tests {
             id: None,
             disable_io_uring: false,
             disable_aio: false,
-            rate_limit_group: None,
-            rate_limiter_config: None,
             pci_segment: 0,
             serial: None,
             queue_affinity: None,
@@ -3001,13 +2731,6 @@ mod tests {
             }
         );
         assert_eq!(
-            DiskConfig::parse("path=/path/to_file,rate_limit_group=group0")?,
-            DiskConfig {
-                rate_limit_group: Some("group0".to_string()),
-                ..disk_fixture()
-            }
-        );
-        assert_eq!(
             DiskConfig::parse("path=/path/to_file,queue_affinity=[0@[1],1@[2],2@[3,4],3@[5-8]]")?,
             DiskConfig {
                 queue_affinity: Some(vec![
@@ -3050,7 +2773,6 @@ mod tests {
             vhost_mode: VhostMode::Client,
             id: None,
             fds: None,
-            rate_limiter_config: None,
             pci_segment: 0,
             offload_tso: true,
             offload_ufo: true,
@@ -3423,563 +3145,5 @@ mod tests {
             sgx_epc_sections: None,
             pci_segments: None,
         }
-    }
-
-    #[test]
-    fn test_config_validation() {
-        let mut valid_config = VmConfig {
-            cpus: CpusConfig {
-                boot_vcpus: 1,
-                max_vcpus: 1,
-                ..Default::default()
-            },
-            memory: MemoryConfig {
-                size: 536_870_912,
-                mergeable: false,
-                hotplug_method: HotplugMethod::Acpi,
-                hotplug_size: None,
-                hotplugged_size: None,
-                shared: false,
-                hugepages: false,
-                hugepage_size: None,
-                prefault: false,
-                zones: None,
-                thp: true,
-            },
-            payload: Some(PayloadConfig {
-                kernel: Some(PathBuf::from("/path/to/kernel")),
-                firmware: None,
-                cmdline: None,
-                initramfs: None,
-                #[cfg(feature = "igvm")]
-                igvm: None,
-            }),
-            rate_limit_groups: None,
-            disks: None,
-            net: None,
-            rng: RngConfig {
-                src: PathBuf::from("/dev/urandom"),
-                iommu: false,
-            },
-            balloon: None,
-            fs: None,
-            pmem: None,
-            serial: ConsoleConfig {
-                file: None,
-                mode: ConsoleOutputMode::Null,
-                iommu: false,
-                socket: None,
-            },
-            console: ConsoleConfig {
-                file: None,
-                mode: ConsoleOutputMode::Tty,
-                iommu: false,
-                socket: None,
-            },
-            #[cfg(target_arch = "x86_64")]
-            debug_console: DebugConsoleConfig::default(),
-            devices: None,
-            user_devices: None,
-            vdpa: None,
-            vsock: None,
-            pvpanic: false,
-            iommu: false,
-            #[cfg(target_arch = "x86_64")]
-            sgx_epc: None,
-            numa: None,
-            watchdog: false,
-            #[cfg(feature = "guest_debug")]
-            gdb: false,
-            platform: None,
-            tpm: None,
-            preserved_fds: None,
-        };
-
-        assert!(valid_config.validate().is_ok());
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.serial.mode = ConsoleOutputMode::Tty;
-        invalid_config.console.mode = ConsoleOutputMode::Tty;
-        assert!(valid_config.validate().is_ok());
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.payload = None;
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::KernelMissing)
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.serial.mode = ConsoleOutputMode::File;
-        invalid_config.serial.file = None;
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::ConsoleFileMissing)
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.cpus.max_vcpus = 16;
-        invalid_config.cpus.boot_vcpus = 32;
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::CpusMaxLowerThanBoot)
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.cpus.max_vcpus = 16;
-        invalid_config.cpus.boot_vcpus = 16;
-        invalid_config.cpus.topology = Some(CpuTopology {
-            threads_per_core: 2,
-            cores_per_die: 8,
-            dies_per_package: 1,
-            packages: 2,
-        });
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::CpuTopologyCount)
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.disks = Some(vec![DiskConfig {
-            vhost_socket: Some("/path/to/sock".to_owned()),
-            path: Some(PathBuf::from("/path/to/image")),
-            ..disk_fixture()
-        }]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::DiskSocketAndPath)
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.memory.shared = true;
-        invalid_config.disks = Some(vec![DiskConfig {
-            path: None,
-            vhost_user: true,
-            ..disk_fixture()
-        }]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::VhostUserMissingSocket)
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.disks = Some(vec![DiskConfig {
-            path: None,
-            vhost_user: true,
-            vhost_socket: Some("/path/to/sock".to_owned()),
-            ..disk_fixture()
-        }]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::VhostUserRequiresSharedMemory)
-        );
-
-        let mut still_valid_config = valid_config.clone();
-        still_valid_config.disks = Some(vec![DiskConfig {
-            path: None,
-            vhost_user: true,
-            vhost_socket: Some("/path/to/sock".to_owned()),
-            ..disk_fixture()
-        }]);
-        still_valid_config.memory.shared = true;
-        assert!(still_valid_config.validate().is_ok());
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.net = Some(vec![NetConfig {
-            vhost_user: true,
-            ..net_fixture()
-        }]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::VhostUserRequiresSharedMemory)
-        );
-
-        let mut still_valid_config = valid_config.clone();
-        still_valid_config.net = Some(vec![NetConfig {
-            vhost_user: true,
-            vhost_socket: Some("/path/to/sock".to_owned()),
-            ..net_fixture()
-        }]);
-        still_valid_config.memory.shared = true;
-        assert!(still_valid_config.validate().is_ok());
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.net = Some(vec![NetConfig {
-            fds: Some(vec![0]),
-            ..net_fixture()
-        }]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::VnetReservedFd)
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.net = Some(vec![NetConfig {
-            offload_csum: false,
-            ..net_fixture()
-        }]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::NoHardwareChecksumOffload)
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.fs = Some(vec![fs_fixture()]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::VhostUserRequiresSharedMemory)
-        );
-
-        let mut still_valid_config = valid_config.clone();
-        still_valid_config.memory.shared = true;
-        assert!(still_valid_config.validate().is_ok());
-
-        let mut still_valid_config = valid_config.clone();
-        still_valid_config.memory.hugepages = true;
-        assert!(still_valid_config.validate().is_ok());
-
-        let mut still_valid_config = valid_config.clone();
-        still_valid_config.memory.hugepages = true;
-        still_valid_config.memory.hugepage_size = Some(2 << 20);
-        assert!(still_valid_config.validate().is_ok());
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.memory.hugepages = false;
-        invalid_config.memory.hugepage_size = Some(2 << 20);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::HugePageSizeWithoutHugePages)
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.memory.hugepages = true;
-        invalid_config.memory.hugepage_size = Some(3 << 20);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::InvalidHugePageSize(3 << 20))
-        );
-
-        let mut still_valid_config = valid_config.clone();
-        still_valid_config.platform = Some(platform_fixture());
-        assert!(still_valid_config.validate().is_ok());
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.platform = Some(PlatformConfig {
-            num_pci_segments: MAX_NUM_PCI_SEGMENTS + 1,
-            ..platform_fixture()
-        });
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::InvalidNumPciSegments(
-                MAX_NUM_PCI_SEGMENTS + 1
-            ))
-        );
-
-        let mut still_valid_config = valid_config.clone();
-        still_valid_config.platform = Some(PlatformConfig {
-            iommu_segments: Some(vec![1, 2, 3]),
-            ..platform_fixture()
-        });
-        assert!(still_valid_config.validate().is_ok());
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.platform = Some(PlatformConfig {
-            iommu_segments: Some(vec![MAX_NUM_PCI_SEGMENTS + 1, MAX_NUM_PCI_SEGMENTS + 2]),
-            ..platform_fixture()
-        });
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::InvalidPciSegment(MAX_NUM_PCI_SEGMENTS + 1))
-        );
-
-        let mut still_valid_config = valid_config.clone();
-        still_valid_config.platform = Some(PlatformConfig {
-            iommu_segments: Some(vec![1, 2, 3]),
-            ..platform_fixture()
-        });
-        still_valid_config.disks = Some(vec![DiskConfig {
-            iommu: true,
-            pci_segment: 1,
-            ..disk_fixture()
-        }]);
-        assert!(still_valid_config.validate().is_ok());
-
-        let mut still_valid_config = valid_config.clone();
-        still_valid_config.platform = Some(PlatformConfig {
-            iommu_segments: Some(vec![1, 2, 3]),
-            ..platform_fixture()
-        });
-        still_valid_config.net = Some(vec![NetConfig {
-            iommu: true,
-            pci_segment: 1,
-            ..net_fixture()
-        }]);
-        assert!(still_valid_config.validate().is_ok());
-
-        let mut still_valid_config = valid_config.clone();
-        still_valid_config.platform = Some(PlatformConfig {
-            iommu_segments: Some(vec![1, 2, 3]),
-            ..platform_fixture()
-        });
-        still_valid_config.pmem = Some(vec![PmemConfig {
-            iommu: true,
-            pci_segment: 1,
-            ..pmem_fixture()
-        }]);
-        assert!(still_valid_config.validate().is_ok());
-
-        let mut still_valid_config = valid_config.clone();
-        still_valid_config.platform = Some(PlatformConfig {
-            iommu_segments: Some(vec![1, 2, 3]),
-            ..platform_fixture()
-        });
-        still_valid_config.devices = Some(vec![DeviceConfig {
-            iommu: true,
-            pci_segment: 1,
-            ..device_fixture()
-        }]);
-        assert!(still_valid_config.validate().is_ok());
-
-        let mut still_valid_config = valid_config.clone();
-        still_valid_config.platform = Some(PlatformConfig {
-            iommu_segments: Some(vec![1, 2, 3]),
-            ..platform_fixture()
-        });
-        still_valid_config.vsock = Some(VsockConfig {
-            cid: 3,
-            socket: PathBuf::new(),
-            id: None,
-            iommu: true,
-            pci_segment: 1,
-        });
-        assert!(still_valid_config.validate().is_ok());
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.platform = Some(PlatformConfig {
-            iommu_segments: Some(vec![1, 2, 3]),
-            ..platform_fixture()
-        });
-        invalid_config.disks = Some(vec![DiskConfig {
-            iommu: false,
-            pci_segment: 1,
-            ..disk_fixture()
-        }]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::OnIommuSegment(1))
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.platform = Some(PlatformConfig {
-            iommu_segments: Some(vec![1, 2, 3]),
-            ..platform_fixture()
-        });
-        invalid_config.net = Some(vec![NetConfig {
-            iommu: false,
-            pci_segment: 1,
-            ..net_fixture()
-        }]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::OnIommuSegment(1))
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.platform = Some(PlatformConfig {
-            num_pci_segments: MAX_NUM_PCI_SEGMENTS,
-            iommu_segments: Some(vec![1, 2, 3]),
-            ..platform_fixture()
-        });
-        invalid_config.pmem = Some(vec![PmemConfig {
-            iommu: false,
-            pci_segment: 1,
-            ..pmem_fixture()
-        }]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::OnIommuSegment(1))
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.platform = Some(PlatformConfig {
-            num_pci_segments: MAX_NUM_PCI_SEGMENTS,
-            iommu_segments: Some(vec![1, 2, 3]),
-            ..platform_fixture()
-        });
-        invalid_config.devices = Some(vec![DeviceConfig {
-            iommu: false,
-            pci_segment: 1,
-            ..device_fixture()
-        }]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::OnIommuSegment(1))
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.platform = Some(PlatformConfig {
-            iommu_segments: Some(vec![1, 2, 3]),
-            ..platform_fixture()
-        });
-        invalid_config.vsock = Some(VsockConfig {
-            cid: 3,
-            socket: PathBuf::new(),
-            id: None,
-            iommu: false,
-            pci_segment: 1,
-        });
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::OnIommuSegment(1))
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.memory.shared = true;
-        invalid_config.platform = Some(PlatformConfig {
-            iommu_segments: Some(vec![1, 2, 3]),
-            ..platform_fixture()
-        });
-        invalid_config.user_devices = Some(vec![UserDeviceConfig {
-            pci_segment: 1,
-            socket: PathBuf::new(),
-            id: None,
-        }]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::IommuNotSupportedOnSegment(1))
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.platform = Some(PlatformConfig {
-            iommu_segments: Some(vec![1, 2, 3]),
-            ..platform_fixture()
-        });
-        invalid_config.vdpa = Some(vec![VdpaConfig {
-            pci_segment: 1,
-            ..vdpa_fixture()
-        }]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::OnIommuSegment(1))
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.memory.shared = true;
-        invalid_config.platform = Some(PlatformConfig {
-            iommu_segments: Some(vec![1, 2, 3]),
-            ..platform_fixture()
-        });
-        invalid_config.fs = Some(vec![FsConfig {
-            pci_segment: 1,
-            ..fs_fixture()
-        }]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::IommuNotSupportedOnSegment(1))
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.platform = Some(PlatformConfig {
-            num_pci_segments: 2,
-            ..platform_fixture()
-        });
-        invalid_config.numa = Some(vec![
-            NumaConfig {
-                guest_numa_id: 0,
-                pci_segments: Some(vec![1]),
-                ..numa_fixture()
-            },
-            NumaConfig {
-                guest_numa_id: 1,
-                pci_segments: Some(vec![1]),
-                ..numa_fixture()
-            },
-        ]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::PciSegmentReused(1, 0, 1))
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.numa = Some(vec![
-            NumaConfig {
-                guest_numa_id: 0,
-                ..numa_fixture()
-            },
-            NumaConfig {
-                guest_numa_id: 1,
-                pci_segments: Some(vec![0]),
-                ..numa_fixture()
-            },
-        ]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::DefaultPciSegmentInvalidNode(1))
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.numa = Some(vec![
-            NumaConfig {
-                guest_numa_id: 0,
-                pci_segments: Some(vec![0]),
-                ..numa_fixture()
-            },
-            NumaConfig {
-                guest_numa_id: 1,
-                pci_segments: Some(vec![1]),
-                ..numa_fixture()
-            },
-        ]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::InvalidPciSegment(1))
-        );
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.disks = Some(vec![DiskConfig {
-            rate_limit_group: Some("foo".into()),
-            ..disk_fixture()
-        }]);
-        assert_eq!(
-            invalid_config.validate(),
-            Err(ValidationError::InvalidRateLimiterGroup)
-        );
-
-        let mut still_valid_config = valid_config.clone();
-        still_valid_config.devices = Some(vec![
-            DeviceConfig {
-                path: "/device1".into(),
-                ..device_fixture()
-            },
-            DeviceConfig {
-                path: "/device2".into(),
-                ..device_fixture()
-            },
-        ]);
-        assert!(still_valid_config.validate().is_ok());
-
-        let mut invalid_config = valid_config.clone();
-        invalid_config.devices = Some(vec![
-            DeviceConfig {
-                path: "/device1".into(),
-                ..device_fixture()
-            },
-            DeviceConfig {
-                path: "/device1".into(),
-                ..device_fixture()
-            },
-        ]);
-        assert!(invalid_config.validate().is_err());
-
-        let mut still_valid_config = valid_config;
-        // SAFETY: Safe as the file was just opened
-        let fd1 = unsafe { libc::dup(File::open("/dev/null").unwrap().as_raw_fd()) };
-        // SAFETY: Safe as the file was just opened
-        let fd2 = unsafe { libc::dup(File::open("/dev/null").unwrap().as_raw_fd()) };
-        // SAFETY: safe as both FDs are valid
-        unsafe {
-            still_valid_config.add_preserved_fds(vec![fd1, fd2]);
-        }
-        let _still_valid_config = still_valid_config.clone();
     }
 }

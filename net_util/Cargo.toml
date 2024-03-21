@@ -10,7 +10,6 @@ getrandom = "0.2.11"
 libc = "0.2.153"
 log = "0.4.20"
 net_gen = { path = "../net_gen" }
-rate_limiter = { path = "../rate_limiter" }
 serde = "1.0.196"
 thiserror = "1.0.52"
 versionize = "0.2.0"

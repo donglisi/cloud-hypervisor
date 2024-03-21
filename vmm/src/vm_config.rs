@@ -5,7 +5,6 @@
 use net_util::MacAddr;
 use serde::{Deserialize, Serialize};
 use std::{net::Ipv4Addr, path::PathBuf};
-use virtio_devices::RateLimiterConfig;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CpuAffinity {
@@ -180,14 +179,6 @@ pub enum VhostMode {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct RateLimiterGroupConfig {
-    #[serde(default)]
-    pub id: String,
-    #[serde(default)]
-    pub rate_limiter_config: RateLimiterConfig,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VirtQueueAffinity {
     pub queue_index: u16,
     pub host_cpus: Vec<usize>,
@@ -209,10 +200,6 @@ pub struct DiskConfig {
     #[serde(default)]
     pub vhost_user: bool,
     pub vhost_socket: Option<String>,
-    #[serde(default)]
-    pub rate_limit_group: Option<String>,
-    #[serde(default)]
-    pub rate_limiter_config: Option<RateLimiterConfig>,
     #[serde(default)]
     pub id: Option<String>,
     // For testing use only. Not exposed in API.
@@ -270,8 +257,6 @@ pub struct NetConfig {
     pub id: Option<String>,
     #[serde(default)]
     pub fds: Option<Vec<i32>>,
-    #[serde(default)]
-    pub rate_limiter_config: Option<RateLimiterConfig>,
     #[serde(default)]
     pub pci_segment: u16,
     #[serde(default = "default_netconfig_true")]
@@ -554,7 +539,6 @@ pub struct VmConfig {
     #[serde(default)]
     pub memory: MemoryConfig,
     pub payload: Option<PayloadConfig>,
-    pub rate_limit_groups: Option<Vec<RateLimiterGroupConfig>>,
     pub disks: Option<Vec<DiskConfig>>,
     pub net: Option<Vec<NetConfig>>,
     #[serde(default)]

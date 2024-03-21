@@ -22,8 +22,6 @@ use block::{
     async_io::AsyncIo, async_io::AsyncIoError, async_io::DiskFile, build_serial, Request,
     RequestType, VirtioBlockConfig,
 };
-use rate_limiter::group::{RateLimiterGroup, RateLimiterGroupHandle};
-use rate_limiter::TokenType;
 use seccompiler::SeccompAction;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
@@ -41,7 +39,7 @@ use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
 use virtio_bindings::virtio_blk::*;
 use virtio_bindings::virtio_config::*;
-use virtio_queue::{Queue, QueueOwnedT, QueueT};
+use virtio_queue::{Queue, QueueT};
 use vm_memory::{ByteValued, Bytes, GuestAddressSpace, GuestMemoryAtomic, GuestMemoryError};
 use vm_migration::VersionMapped;
 use vm_migration::{Migratable, MigratableError, Pausable, Snapshot, Snapshottable, Transportable};
@@ -55,8 +53,6 @@ pub const SECTOR_SIZE: u64 = 0x01 << SECTOR_SHIFT;
 const QUEUE_AVAIL_EVENT: u16 = EPOLL_HELPER_EVENT_LAST + 1;
 // New completed tasks are pending on the completion ring.
 const COMPLETION_EVENT: u16 = EPOLL_HELPER_EVENT_LAST + 2;
-// New 'wake up' event from the rate limiter
-const RATE_LIMITER_EVENT: u16 = EPOLL_HELPER_EVENT_LAST + 3;
 
 // latency scale, for reduce precision loss in calculate.
 const LATENCY_SCALE: u64 = 10000;
@@ -132,7 +128,6 @@ struct BlockEpollHandler {
     counters: BlockCounters,
     queue_evt: EventFd,
     inflight_requests: VecDeque<(u16, Request)>,
-    rate_limiter: Option<RateLimiterGroupHandle>,
     access_platform: Option<Arc<dyn AccessPlatform>>,
     read_only: bool,
     host_cpus: Option<Vec<usize>>,
@@ -167,37 +162,6 @@ impl BlockEpollHandler {
                     .map_err(Error::QueueAddUsed)?;
                 used_descs = true;
                 continue;
-            }
-
-            if let Some(rate_limiter) = &mut self.rate_limiter {
-                // If limiter.consume() fails it means there is no more TokenType::Ops
-                // budget and rate limiting is in effect.
-                if !rate_limiter.consume(1, TokenType::Ops) {
-                    // Stop processing the queue and return this descriptor chain to the
-                    // avail ring, for later processing.
-                    queue.go_to_previous_position();
-                    break;
-                }
-                // Exercise the rate limiter only if this request is of data transfer type.
-                if request.request_type == RequestType::In
-                    || request.request_type == RequestType::Out
-                {
-                    let mut bytes = Wrapping(0);
-                    for (_, data_len) in &request.data_descriptors {
-                        bytes += Wrapping(*data_len as u64);
-                    }
-
-                    // If limiter.consume() fails it means there is no more TokenType::Bytes
-                    // budget and rate limiting is in effect.
-                    if !rate_limiter.consume(bytes.0, TokenType::Bytes) {
-                        // Revert the OPS consume().
-                        rate_limiter.manual_replenish(1, TokenType::Ops);
-                        // Stop processing the queue and return this descriptor chain to the
-                        // avail ring, for later processing.
-                        queue.go_to_previous_position();
-                        break;
-                    }
-                };
             }
 
             request.set_writeback(self.writeback.load(Ordering::Acquire));
@@ -453,9 +417,6 @@ impl BlockEpollHandler {
         let mut helper = EpollHelper::new(&self.kill_evt, &self.pause_evt)?;
         helper.add_event(self.queue_evt.as_raw_fd(), QUEUE_AVAIL_EVENT)?;
         helper.add_event(self.disk_image.notifier().as_raw_fd(), COMPLETION_EVENT)?;
-        if let Some(rate_limiter) = &self.rate_limiter {
-            helper.add_event(rate_limiter.as_raw_fd(), RATE_LIMITER_EVENT)?;
-        }
         self.set_queue_thread_affinity();
         helper.run(paused, paused_sync, self)?;
 
@@ -475,14 +436,7 @@ impl EpollHelperHandler for BlockEpollHandler {
                 self.queue_evt.read().map_err(|e| {
                     EpollHelperError::HandleEvent(anyhow!("Failed to get queue event: {:?}", e))
                 })?;
-
-                let rate_limit_reached =
-                    self.rate_limiter.as_ref().map_or(false, |r| r.is_blocked());
-
-                // Process the queue only when the rate limit is not reached
-                if !rate_limit_reached {
-                    self.process_queue_submit_and_signal()?
-                }
+                self.process_queue_submit_and_signal()?
             }
             COMPLETION_EVENT => {
                 self.disk_image.notifier().read().map_err(|e| {
@@ -503,24 +457,6 @@ impl EpollHelperHandler for BlockEpollHandler {
                             e
                         ))
                     })?;
-                }
-            }
-            RATE_LIMITER_EVENT => {
-                if let Some(rate_limiter) = &mut self.rate_limiter {
-                    // Upon rate limiter event, call the rate limiter handler
-                    // and restart processing the queue.
-                    rate_limiter.event_handler().map_err(|e| {
-                        EpollHelperError::HandleEvent(anyhow!(
-                            "Failed to process rate limiter event: {:?}",
-                            e
-                        ))
-                    })?;
-
-                    self.process_queue_submit_and_signal()?
-                } else {
-                    return Err(EpollHelperError::HandleEvent(anyhow!(
-                        "Unexpected 'RATE_LIMITER_EVENT' when rate_limiter is not enabled."
-                    )));
                 }
             }
             _ => {
@@ -545,7 +481,6 @@ pub struct Block {
     writeback: Arc<AtomicBool>,
     counters: BlockCounters,
     seccomp_action: SeccompAction,
-    rate_limiter: Option<Arc<RateLimiterGroup>>,
     exit_evt: EventFd,
     read_only: bool,
     serial: Vec<u8>,
@@ -576,7 +511,6 @@ impl Block {
         queue_size: u16,
         serial: Option<String>,
         seccomp_action: SeccompAction,
-        rate_limiter: Option<Arc<RateLimiterGroup>>,
         exit_evt: EventFd,
         state: Option<BlockState>,
         queue_affinity: BTreeMap<u16, Vec<usize>>,
@@ -679,7 +613,6 @@ impl Block {
             writeback: Arc::new(AtomicBool::new(true)),
             counters: BlockCounters::default(),
             seccomp_action,
-            rate_limiter,
             exit_evt,
             read_only,
             serial,
@@ -812,12 +745,6 @@ impl VirtioDevice for Block {
                 // This gives head room for systems with slower I/O without
                 // compromising the cost of the reallocation or memory overhead
                 inflight_requests: VecDeque::with_capacity(64),
-                rate_limiter: self
-                    .rate_limiter
-                    .as_ref()
-                    .map(|r| r.new_handle())
-                    .transpose()
-                    .unwrap(),
                 access_platform: self.common.access_platform.clone(),
                 read_only: self.read_only,
                 host_cpus: self.queue_affinity.get(&queue_idx).cloned(),

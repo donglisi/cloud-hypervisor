@@ -233,13 +233,6 @@ fn create_app(default_vcpus: String, default_memory: String, default_rng: String
                 .group("vm-config"),
         )
         .arg(
-            Arg::new("rate-limit-group")
-                .long("rate-limit-group")
-                .help(config::RateLimiterGroupConfig::SYNTAX)
-                .num_args(1..)
-                .group("vm-config"),
-        )
-        .arg(
             Arg::new("disk")
                 .long("disk")
                 .help(config::DiskConfig::SYNTAX)

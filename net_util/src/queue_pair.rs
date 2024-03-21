@@ -4,7 +4,6 @@
 
 use super::{register_listener, unregister_listener, vnet_hdr_len, Tap};
 use crate::GuestMemoryMmap;
-use rate_limiter::{RateLimiter, TokenType};
 use std::io;
 use std::num::Wrapping;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -40,18 +39,11 @@ impl TxVirtio {
         mem: &GuestMemoryMmap,
         tap: &Tap,
         queue: &mut Queue,
-        rate_limiter: &mut Option<RateLimiter>,
         access_platform: Option<&Arc<dyn AccessPlatform>>,
     ) -> Result<bool, NetQueuePairError> {
         let mut retry_write = false;
-        let mut rate_limit_reached = false;
 
         while let Some(mut desc_chain) = queue.pop_descriptor_chain(mem) {
-            if rate_limit_reached {
-                queue.go_to_previous_position();
-                break;
-            }
-
             let mut next_desc = desc_chain.next();
 
             let mut iovecs = Vec::new();
@@ -117,14 +109,6 @@ impl TxVirtio {
                 0
             };
 
-            // For the sake of simplicity (similar to the RX rate limiting), we always
-            // let the 'last' descriptor chain go-through even if it was over the rate
-            // limit, and simply stop processing oncoming `avail_desc` if any.
-            if let Some(rate_limiter) = rate_limiter {
-                rate_limit_reached = !rate_limiter.consume(1, TokenType::Ops)
-                    || !rate_limiter.consume(len as u64, TokenType::Bytes);
-            }
-
             queue
                 .add_used(desc_chain.memory(), desc_chain.head_index(), len)
                 .map_err(NetQueuePairError::QueueAddUsed)?;
@@ -166,19 +150,11 @@ impl RxVirtio {
         mem: &GuestMemoryMmap,
         tap: &Tap,
         queue: &mut Queue,
-        rate_limiter: &mut Option<RateLimiter>,
         access_platform: Option<&Arc<dyn AccessPlatform>>,
     ) -> Result<bool, NetQueuePairError> {
         let mut exhausted_descs = true;
-        let mut rate_limit_reached = false;
 
         while let Some(mut desc_chain) = queue.pop_descriptor_chain(mem) {
-            if rate_limit_reached {
-                exhausted_descs = false;
-                queue.go_to_previous_position();
-                break;
-            }
-
             let desc = desc_chain
                 .next()
                 .ok_or(NetQueuePairError::DescriptorChainTooShort)?;
@@ -263,15 +239,6 @@ impl RxVirtio {
                 0
             };
 
-            // For the sake of simplicity (keeping the handling of RX_QUEUE_EVENT and
-            // RX_TAP_EVENT totally asynchronous), we always let the 'last' descriptor
-            // chain go-through even if it was over the rate limit, and simply stop
-            // processing oncoming `avail_desc` if any.
-            if let Some(rate_limiter) = rate_limiter {
-                rate_limit_reached = !rate_limiter.consume(1, TokenType::Ops)
-                    || !rate_limiter.consume(len as u64, TokenType::Bytes);
-            }
-
             queue
                 .add_used(desc_chain.memory(), desc_chain.head_index(), len)
                 .map_err(NetQueuePairError::QueueAddUsed)?;
@@ -344,8 +311,6 @@ pub struct NetQueuePair {
     pub tap_rx_event_id: u16,
     pub tap_tx_event_id: u16,
     pub rx_desc_avail: bool,
-    pub rx_rate_limiter: Option<RateLimiter>,
-    pub tx_rate_limiter: Option<RateLimiter>,
     pub access_platform: Option<Arc<dyn AccessPlatform>>,
 }
 
@@ -359,7 +324,6 @@ impl NetQueuePair {
             mem,
             &self.tap,
             queue,
-            &mut self.tx_rate_limiter,
             self.access_platform.as_ref(),
         )?;
 
@@ -409,18 +373,13 @@ impl NetQueuePair {
             mem,
             &self.tap,
             queue,
-            &mut self.rx_rate_limiter,
             self.access_platform.as_ref(),
         )?;
-        let rate_limit_reached = self
-            .rx_rate_limiter
-            .as_ref()
-            .map_or(false, |r| r.is_blocked());
 
         // Stop listening on the `RX_TAP_EVENT` when:
         // 1) there is no available describles, or
         // 2) the RX rate limit is reached.
-        if self.rx_tap_listening && (!self.rx_desc_avail || rate_limit_reached) {
+        if self.rx_tap_listening && (!self.rx_desc_avail) {
             unregister_listener(
                 self.epoll_fd.unwrap(),
                 self.tap.as_raw_fd(),

@@ -16,7 +16,6 @@ extern crate event_monitor;
 extern crate log;
 
 use serde::{Deserialize, Serialize};
-use std::convert::TryInto;
 use std::io;
 use thiserror::Error;
 
@@ -102,30 +101,6 @@ pub struct TokenBucketConfig {
     pub size: u64,
     pub one_time_burst: Option<u64>,
     pub refill_time: u64,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct RateLimiterConfig {
-    pub bandwidth: Option<TokenBucketConfig>,
-    pub ops: Option<TokenBucketConfig>,
-}
-
-impl TryInto<rate_limiter::RateLimiter> for RateLimiterConfig {
-    type Error = io::Error;
-
-    fn try_into(self) -> std::result::Result<rate_limiter::RateLimiter, Self::Error> {
-        let bw = self.bandwidth.unwrap_or_default();
-        let ops = self.ops.unwrap_or_default();
-        rate_limiter::RateLimiter::new(
-            bw.size,
-            bw.one_time_burst.unwrap_or(0),
-            bw.refill_time,
-            ops.size,
-            ops.one_time_burst.unwrap_or(0),
-            ops.refill_time,
-        )
-    }
 }
 
 /// Convert an absolute address into an address space (GuestMemory)
