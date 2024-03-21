@@ -19,7 +19,7 @@ rust-version = "1.70"
 
 [profile.release]
 lto = false
-codegen-units = 8
+codegen-units = 16
 opt-level = 0
 strip = true
 

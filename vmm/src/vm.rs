@@ -1021,7 +1021,6 @@ impl Vm {
         memory_manager: Arc<Mutex<MemoryManager>>,
         #[cfg(feature = "igvm")] cpu_manager: Arc<Mutex<cpu::CpuManager>>,
     ) -> Result<EntryPoint> {
-        trace_scoped!("load_payload");
         #[cfg(feature = "igvm")]
         if let Some(_igvm_file) = &payload.igvm {
             let igvm = File::open(_igvm_file).map_err(Error::IgvmFile)?;
@@ -1103,7 +1102,6 @@ impl Vm {
 
     #[cfg(target_arch = "x86_64")]
     fn configure_system(&mut self, rsdp_addr: GuestAddress) -> Result<()> {
-        trace_scoped!("configure_system");
         info!("Configuring system");
         let mem = self.memory_manager.lock().unwrap().boot_guest_memory();
 
