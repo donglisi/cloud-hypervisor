@@ -10,8 +10,6 @@
 #[macro_use]
 extern crate bitflags;
 #[macro_use]
-extern crate event_monitor;
-#[macro_use]
 extern crate log;
 
 pub mod acpi;

@@ -4,8 +4,6 @@
 //
 
 #[macro_use]
-extern crate event_monitor;
-#[macro_use]
 extern crate log;
 
 use crate::api::{
@@ -1403,14 +1401,11 @@ impl RequestHandler for Vmm {
 
         self.vm_config = None;
 
-        event!("vm", "deleted");
-
         Ok(())
     }
 
     fn vmm_shutdown(&mut self) -> result::Result<(), VmError> {
         self.vm_delete()?;
-        event!("vmm", "shutdown");
         Ok(())
     }
 

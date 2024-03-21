@@ -438,7 +438,6 @@ dependencies = [
  "dhat",
  "dirs",
  "epoll",
- "event_monitor",
  "hypervisor",
  "libc",
  "log",
@@ -582,7 +581,6 @@ dependencies = [
  "arch",
  "bitflags 2.4.1",
  "byteorder",
- "event_monitor",
  "hypervisor",
  "libc",
  "log",
@@ -740,17 +738,6 @@ checksum = "958e4d70b6d5e81971bebec42271ec641e7ff4e170a6fa605f2b8a8b65cb97d3"
 dependencies = [
  "event-listener 4.0.0",
  "pin-project-lite",
-]
-
-[[package]]
-name = "event_monitor"
-version = "0.1.0"
-dependencies = [
- "flume",
- "libc",
- "once_cell",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -2193,7 +2180,6 @@ dependencies = [
  "block",
  "byteorder",
  "epoll",
- "event_monitor",
  "libc",
  "log",
  "net_gen",
@@ -2304,7 +2290,6 @@ dependencies = [
  "clap",
  "devices",
  "epoll",
- "event_monitor",
  "flume",
  "futures",
  "gdbstub",

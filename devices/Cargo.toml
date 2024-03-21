@@ -10,7 +10,6 @@ anyhow = "1.0.79"
 arch = { path = "../arch" }
 bitflags = "2.4.1"
 byteorder = "1.4.3"
-event_monitor = { path = "../event_monitor" }
 hypervisor = { path = "../hypervisor" }
 libc = "0.2.153"
 log = "0.4.20"

@@ -28,7 +28,6 @@ cfg-if = "1.0.0"
 clap = "4.4.7"
 devices = { path = "../devices" }
 epoll = "4.3.3"
-event_monitor = { path = "../event_monitor" }
 flume = "0.10.14"
 futures = { version = "0.3.30", optional = true }
 gdbstub = { version = "0.7.1", optional = true }

@@ -1301,8 +1301,6 @@ impl Vm {
         }
         *state = new_state;
 
-        event!("vm", "shutdown");
-
         Ok(())
     }
 
@@ -1704,7 +1702,6 @@ impl Vm {
     pub fn boot(&mut self) -> Result<()> {
         trace_scoped!("Vm::boot");
         info!("Booting VM");
-        event!("vm", "booting");
         let current_state = self.get_state()?;
         if current_state == VmState::Paused {
             return self.resume().map_err(Error::Resume);
@@ -1821,12 +1818,10 @@ impl Vm {
 
         let mut state = self.state.try_write().map_err(|_| Error::PoisonedState)?;
         *state = new_state;
-        event!("vm", "booted");
         Ok(())
     }
 
     pub fn restore(&mut self) -> Result<()> {
-        event!("vm", "restoring");
 
         #[cfg(target_arch = "x86_64")]
         // Note: For x86, always call this function before invoking start boot vcpus.
@@ -1847,7 +1842,6 @@ impl Vm {
             .start_restored_vcpus()
             .map_err(Error::CpuManager)?;
 
-        event!("vm", "restored");
         Ok(())
     }
 
@@ -2084,7 +2078,6 @@ impl Vm {
 
 impl Pausable for Vm {
     fn pause(&mut self) -> std::result::Result<(), MigratableError> {
-        event!("vm", "pausing");
         let mut state = self
             .state
             .try_write()
@@ -2116,12 +2109,10 @@ impl Pausable for Vm {
 
         *state = new_state;
 
-        event!("vm", "paused");
         Ok(())
     }
 
     fn resume(&mut self) -> std::result::Result<(), MigratableError> {
-        event!("vm", "resuming");
         let mut state = self
             .state
             .try_write()
@@ -2145,7 +2136,6 @@ impl Pausable for Vm {
 
         // And we're back to the Running state.
         *state = new_state;
-        event!("vm", "resumed");
         Ok(())
     }
 }
@@ -2165,7 +2155,6 @@ impl Snapshottable for Vm {
     }
 
     fn snapshot(&mut self) -> std::result::Result<Snapshot, MigratableError> {
-        event!("vm", "snapshotting");
 
         #[cfg(feature = "tdx")]
         {
@@ -2232,7 +2221,6 @@ impl Snapshottable for Vm {
         };
         vm_snapshot.add_snapshot(id, snapshot);
 
-        event!("vm", "snapshotted");
         Ok(vm_snapshot)
     }
 }
@@ -2419,7 +2407,6 @@ impl Elf64Writable for Vm {}
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 impl GuestDebuggable for Vm {
     fn coredump(&mut self, destination_url: &str) -> std::result::Result<(), GuestDebuggableError> {
-        event!("vm", "coredumping");
 
         let mut resume = false;
 

@@ -3,9 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#[macro_use]
-extern crate event_monitor;
-
 use clap::{Arg, ArgAction, ArgGroup, ArgMatches, Command};
 use libc::EFD_NONBLOCK;
 use log::{warn, LevelFilter};
@@ -365,13 +362,6 @@ fn create_app(default_vcpus: String, default_memory: String, default_rng: String
                 .group("vmm-config"),
         )
         .arg(
-            Arg::new("event-monitor")
-                .long("event-monitor")
-                .help("File to report events on: path=</path/to/a/file> or fd=<fd>")
-                .num_args(1)
-                .group("vmm-config"),
-        )
-        .arg(
             Arg::new("restore")
                 .long("restore")
                 .help(config::RestoreConfig::SYNTAX)
@@ -582,35 +572,6 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
     let vm_debug_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateDebugEventFd)?;
 
     let exit_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateExitEventFd)?;
-
-    #[cfg(feature = "dbus_api")]
-    let dbus_options = match (
-        cmd_arguments.get_one::<String>("dbus-service-name"),
-        cmd_arguments.get_one::<String>("dbus-object-path"),
-    ) {
-        (Some(name), Some(path)) => {
-            // monitor is either set (file based) or not.
-            // if it's not set, create one without file support.
-            let mut monitor = match event_monitor.take() {
-                Some(monitor) => monitor,
-                None => event_monitor::set_monitor(None).map_err(Error::EventMonitorIo)?,
-            };
-            let options = DBusApiOptions {
-                service_name: name.to_string(),
-                object_path: path.to_string(),
-                system_bus: cmd_arguments.get_flag("dbus-system-bus"),
-                event_monitor_rx: monitor.subscribe(),
-            };
-
-            event_monitor = Some(monitor);
-            Ok(Some(options))
-        }
-        (Some(_), None) => Err(Error::MissingDBusObjectPath),
-        (None, Some(_)) => Err(Error::MissingDBusServiceName),
-        (None, None) => Ok(None),
-    }?;
-
-    event!("vmm", "starting");
 
     let vmm_thread_handle = vmm::start_vmm_thread(
         vmm::VmmVersionInfo::new(env!("BUILD_VERSION"), env!("CARGO_PKG_VERSION")),

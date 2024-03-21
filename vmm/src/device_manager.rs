@@ -117,7 +117,6 @@ const PVPANIC_DEVICE_NAME: &str = "__pvpanic";
 // identifiers if the user doesn't give one
 const DISK_DEVICE_NAME_PREFIX: &str = "_disk";
 const NET_DEVICE_NAME_PREFIX: &str = "_net";
-const WATCHDOG_DEVICE_NAME: &str = "__watchdog";
 const VIRTIO_PCI_DEVICE_NAME_PREFIX: &str = "_virtio-pci";
 
 /// Errors associated with device manager
@@ -2027,9 +2026,6 @@ impl DeviceManager {
         devices.append(&mut self.make_virtio_net_devices()?);
         devices.append(&mut self.make_virtio_rng_devices()?);
 
-        // Add virtio-watchdog device
-        devices.append(&mut self.make_virtio_watchdog_devices()?);
-
         Ok(devices)
     }
 
@@ -2370,46 +2366,6 @@ impl DeviceManager {
                 .unwrap()
                 .insert(id.clone(), device_node!(id, virtio_rng_device));
         }
-
-        Ok(devices)
-    }
-
-    fn make_virtio_watchdog_devices(&mut self) -> DeviceManagerResult<Vec<MetaVirtioDevice>> {
-        let mut devices = Vec::new();
-
-        if !self.config.lock().unwrap().watchdog {
-            return Ok(devices);
-        }
-
-        let id = String::from(WATCHDOG_DEVICE_NAME);
-        info!("Creating virtio-watchdog device: id = {}", id);
-
-        let virtio_watchdog_device = Arc::new(Mutex::new(
-            virtio_devices::Watchdog::new(
-                id.clone(),
-                self.reset_evt.try_clone().unwrap(),
-                self.seccomp_action.clone(),
-                self.exit_evt
-                    .try_clone()
-                    .map_err(DeviceManagerError::EventFd)?,
-                versioned_state_from_id(self.snapshot.as_ref(), id.as_str())
-                    .map_err(DeviceManagerError::RestoreGetState)?,
-            )
-            .map_err(DeviceManagerError::CreateVirtioWatchdog)?,
-        ));
-        devices.push(MetaVirtioDevice {
-            virtio_device: Arc::clone(&virtio_watchdog_device)
-                as Arc<Mutex<dyn virtio_devices::VirtioDevice>>,
-            iommu: false,
-            id: id.clone(),
-            pci_segment: 0,
-            dma_handler: None,
-        });
-
-        self.device_tree
-            .lock()
-            .unwrap()
-            .insert(id.clone(), device_node!(id, virtio_watchdog_device));
 
         Ok(devices)
     }
@@ -2830,21 +2786,9 @@ impl DeviceManager {
             .remove_node_by_pci_bdf(pci_device_bdf)
             .ok_or(DeviceManagerError::MissingPciDevice)?;
 
-        // For VFIO and vfio-user the PCI device id is the id.
-        // For virtio we overwrite it later as we want the id of the
-        // underlying device.
-        let mut id = pci_device_node.id;
         let pci_device_handle = pci_device_node
             .pci_device_handle
             .ok_or(DeviceManagerError::MissingPciDevice)?;
-        if matches!(pci_device_handle, PciDeviceHandle::Virtio(_)) {
-            // The virtio-pci device has a single child
-            if !pci_device_node.children.is_empty() {
-                assert_eq!(pci_device_node.children.len(), 1);
-                let child_id = &pci_device_node.children[0];
-                id = child_id.clone();
-            }
-        }
         for child in pci_device_node.children.iter() {
             device_tree.remove(child);
         }
@@ -2954,15 +2898,6 @@ impl DeviceManager {
             self.virtio_devices
                 .retain(|handler| !Arc::ptr_eq(&handler.virtio_device, &virtio_device));
         }
-
-        event!(
-            "vm",
-            "device-removed",
-            "id",
-            &id,
-            "bdf",
-            pci_device_bdf.to_string()
-        );
 
         // At this point, the device has been removed from all the list and
         // buses where it was stored. At the end of this function, after

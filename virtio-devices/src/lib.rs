@@ -11,8 +11,6 @@
 //! Implements virtio devices, queues, and transport mechanisms.
 
 #[macro_use]
-extern crate event_monitor;
-#[macro_use]
 extern crate log;
 
 use serde::{Deserialize, Serialize};
@@ -29,7 +27,6 @@ mod rng;
 pub mod seccomp_filters;
 mod thread_helper;
 pub mod transport;
-pub mod watchdog;
 
 pub use self::block::{Block, BlockState};
 pub use self::console::{Console, ConsoleResizer, Endpoint};
@@ -42,7 +39,6 @@ pub use self::epoll_helper::{
 };
 pub use self::net::{Net, NetCtrlEpollHandler};
 pub use self::rng::Rng;
-pub use self::watchdog::Watchdog;
 use vm_memory::{bitmap::AtomicBitmap, GuestAddress, GuestMemory};
 use vm_virtio::VirtioDeviceType;
 

@@ -150,7 +150,6 @@ impl BusDevice for PvPanicDevice {
     fn write(&mut self, _base: u64, _offset: u64, data: &[u8]) -> Option<Arc<Barrier>> {
         let event = self.event_to_string(data[0]);
         info!("pvpanic got guest event {}", event);
-        event!("guest", "panic", "event", &event);
         None
     }
 }
