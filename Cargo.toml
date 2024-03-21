@@ -21,11 +21,11 @@ rust-version = "1.70"
 lto = false
 codegen-units = 8
 opt-level = 0
-strip = false
+strip = true
 
 [profile.profiling]
 inherits = "release"
-strip = false
+strip = true
 opt-level = 0
 debug = true
 
@@ -87,7 +87,6 @@ members = [
     "net_util",
     "option_parser",
     "pci",
-    "performance-metrics",
     "serial_buffer",
     "tracer",
     "virtio-devices",
