@@ -46,7 +46,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use std::{result, thread};
 use thiserror::Error;
-use tracer::trace_scoped;
 use vm_memory::bitmap::AtomicBitmap;
 use vm_memory::{ReadVolatile, WriteVolatile};
 use vm_migration::{protocol::*, Migratable};
@@ -1111,9 +1110,7 @@ impl RequestHandler for Vmm {
     }
 
     fn vm_boot(&mut self) -> result::Result<(), VmError> {
-        tracer::start();
         let r = {
-            trace_scoped!("vm_boot");
             // If we don't have a config, we can not boot a VM.
             if self.vm_config.is_none() {
                 return Err(VmError::VmMissingConfig);
@@ -1164,7 +1161,6 @@ impl RequestHandler for Vmm {
                 Err(VmError::VmNotCreated)
             }
         };
-        tracer::end();
         r
     }
 

@@ -70,7 +70,6 @@ use std::path::PathBuf;
 use std::result;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tracer::trace_scoped;
 use virtio_devices::transport::VirtioTransport;
 use virtio_devices::transport::{VirtioPciDevice, VirtioPciDeviceActivator};
 use virtio_devices::{
@@ -856,8 +855,6 @@ impl DeviceManager {
         snapshot: Option<Snapshot>,
         dynamic: bool,
     ) -> DeviceManagerResult<Arc<Mutex<Self>>> {
-        trace_scoped!("DeviceManager::new");
-
         let (device_tree, device_id_cnt) = if let Some(snapshot) = snapshot.as_ref() {
             let state: DeviceManagerState = snapshot.to_state().unwrap();
             (
@@ -1075,8 +1072,6 @@ impl DeviceManager {
         console_resize_pipe: Option<File>,
         original_termios_opt: Arc<Mutex<Option<termios>>>,
     ) -> DeviceManagerResult<()> {
-        trace_scoped!("create_devices");
-
         let mut virtio_devices: Vec<MetaVirtioDevice> = Vec::new();
 
         let interrupt_controller = self.add_interrupt_controller()?;

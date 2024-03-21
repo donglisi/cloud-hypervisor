@@ -19,7 +19,6 @@ use bitflags::bitflags;
 use pci::PciBdf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tracer::trace_scoped;
 use vm_memory::{Address, Bytes, GuestAddress, GuestMemoryRegion};
 use zerocopy::AsBytes;
 
@@ -174,7 +173,6 @@ pub fn create_dsdt_table(
     cpu_manager: &Arc<Mutex<CpuManager>>,
     memory_manager: &Arc<Mutex<MemoryManager>>,
 ) -> Sdt {
-    trace_scoped!("create_dsdt_table");
     // DSDT
     let mut dsdt = Sdt::new(*b"DSDT", 36, 6, *b"CLOUDH", *b"CHDSDT  ", 1);
 
@@ -189,8 +187,6 @@ pub fn create_dsdt_table(
 }
 
 fn create_facp_table(dsdt_offset: GuestAddress, device_manager: &Arc<Mutex<DeviceManager>>) -> Sdt {
-    trace_scoped!("create_facp_table");
-
     // Revision 6 of the ACPI FADT table is 276 bytes long
     let mut facp = Sdt::new(*b"FACP", 276, 6, *b"CLOUDH", *b"CHFACP  ", 1);
 
@@ -630,8 +626,6 @@ pub fn create_acpi_tables(
     numa_nodes: &NumaNodes,
     tpm_enabled: bool,
 ) -> GuestAddress {
-    trace_scoped!("create_acpi_tables");
-
     let start_time = Instant::now();
     let rsdp_offset = arch::layout::RSDP_POINTER;
     let mut tables: Vec<u64> = Vec::new();

@@ -14,7 +14,6 @@ kvm = ["hypervisor/kvm", "vm-device/kvm", "pci/kvm"]
 mshv = ["hypervisor/mshv", "vm-device/mshv", "pci/mshv"]
 sev_snp = ["arch/sev_snp", "hypervisor/sev_snp"]
 tdx = ["arch/tdx", "hypervisor/tdx"]
-tracing = ["tracer/tracing"]
 
 [dependencies]
 acpi_tables = { git = "https://github.com/rust-vmm/acpi_tables", branch = "main"  }
@@ -52,7 +51,6 @@ serde_json = "1.0.109"
 serial_buffer = { path = "../serial_buffer" }
 signal-hook = "0.3.17"
 thiserror = "1.0.52"
-tracer = { path = "../tracer" }
 uuid = "1.3.4"
 versionize = "0.2.0"
 versionize_derive = "0.1.6"

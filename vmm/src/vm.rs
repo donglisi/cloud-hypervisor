@@ -83,7 +83,6 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 use std::{result, str, thread};
 use thiserror::Error;
-use tracer::trace_scoped;
 use vm_device::Bus;
 #[cfg(feature = "tdx")]
 use vm_memory::{Address, ByteValued, GuestMemoryRegion, ReadVolatile};
@@ -484,8 +483,6 @@ impl Vm {
         original_termios: Arc<Mutex<Option<termios>>>,
         snapshot: Option<Snapshot>,
     ) -> Result<Self> {
-        trace_scoped!("Vm::new_from_memory_manager");
-
         let boot_id_list = config
             .lock()
             .unwrap()
@@ -760,8 +757,6 @@ impl Vm {
         source_url: Option<&str>,
         prefault: Option<bool>,
     ) -> Result<Self> {
-        trace_scoped!("Vm::new");
-
         let timestamp = Instant::now();
 
         #[cfg(feature = "tdx")]
@@ -1691,8 +1686,6 @@ impl Vm {
     }
 
     fn entry_point(&mut self) -> Result<Option<EntryPoint>> {
-        trace_scoped!("entry_point");
-
         self.load_payload_handle
             .take()
             .map(|handle| handle.join().map_err(Error::KernelLoadThreadJoin)?)
@@ -1700,7 +1693,6 @@ impl Vm {
     }
 
     pub fn boot(&mut self) -> Result<()> {
-        trace_scoped!("Vm::boot");
         info!("Booting VM");
         let current_state = self.get_state()?;
         if current_state == VmState::Paused {
