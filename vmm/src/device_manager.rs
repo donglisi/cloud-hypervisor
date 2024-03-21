@@ -105,8 +105,6 @@ const IOAPIC_DEVICE_NAME: &str = "__ioapic";
 const SERIAL_DEVICE_NAME: &str = "__serial";
 #[cfg(target_arch = "x86_64")]
 const DEBUGCON_DEVICE_NAME: &str = "__debug_console";
-#[cfg(target_arch = "aarch64")]
-const GPIO_DEVICE_NAME: &str = "__gpio";
 const RNG_DEVICE_NAME: &str = "__rng";
 const IOMMU_DEVICE_NAME: &str = "__iommu";
 const CONSOLE_DEVICE_NAME: &str = "__console";
@@ -352,10 +350,6 @@ pub enum DeviceManagerError {
 
     /// Failed to do power button notification
     PowerButtonNotification(io::Error),
-
-    /// Failed to do AArch64 GPIO power button notification
-    #[cfg(target_arch = "aarch64")]
-    AArch64PowerButtonNotification(devices::legacy::GpioDeviceError),
 
     /// Failed to set O_DIRECT flag to file descriptor
     SetDirectIo,
@@ -804,10 +798,6 @@ pub struct DeviceManager {
 
     selected_segment: usize,
 
-    #[cfg(target_arch = "aarch64")]
-    // GPIO device for AArch64
-    gpio_device: Option<Arc<Mutex<devices::legacy::Gpio>>>,
-
     // pvpanic device
     pvpanic_device: Option<Arc<Mutex<devices::PvPanicDevice>>>,
 
@@ -1015,8 +1005,6 @@ impl DeviceManager {
             debug_console_pty: None,
             console_resize_pipe: None,
             original_termios_opt: Arc::new(Mutex::new(None)),
-            #[cfg(target_arch = "aarch64")]
-            gpio_device: None,
             pvpanic_device: None,
             force_iommu,
             io_uring_supported: None,
@@ -1531,55 +1519,6 @@ impl DeviceManager {
                 irq: rtc_irq,
             },
         );
-
-        // Add a GPIO device
-        let id = String::from(GPIO_DEVICE_NAME);
-        let gpio_irq = self
-            .address_manager
-            .allocator
-            .lock()
-            .unwrap()
-            .allocate_irq()
-            .unwrap();
-
-        let interrupt_group = interrupt_manager
-            .create_group(LegacyIrqGroupConfig {
-                irq: gpio_irq as InterruptIndex,
-            })
-            .map_err(DeviceManagerError::CreateInterruptGroup)?;
-
-        let gpio_device = Arc::new(Mutex::new(devices::legacy::Gpio::new(
-            id.clone(),
-            interrupt_group,
-            versioned_state_from_id(self.snapshot.as_ref(), id.as_str())
-                .map_err(DeviceManagerError::RestoreGetState)?,
-        )));
-
-        self.bus_devices
-            .push(Arc::clone(&gpio_device) as Arc<Mutex<dyn BusDevice>>);
-
-        let addr = arch::layout::LEGACY_GPIO_MAPPED_IO_START;
-
-        self.address_manager
-            .mmio_bus
-            .insert(gpio_device.clone(), addr.0, MMIO_LEN)
-            .map_err(DeviceManagerError::BusError)?;
-
-        self.gpio_device = Some(gpio_device.clone());
-
-        self.id_to_dev_info.insert(
-            (DeviceType::Gpio, "gpio".to_string()),
-            MmioDeviceInfo {
-                addr: addr.0,
-                len: MMIO_LEN,
-                irq: gpio_irq,
-            },
-        );
-
-        self.device_tree
-            .lock()
-            .unwrap()
-            .insert(id.clone(), device_node!(id, gpio_device));
 
         Ok(())
     }
@@ -2995,15 +2934,6 @@ impl DeviceManager {
         // 1. Users will use direct kernel boot with device tree.
         // 2. Users will use ACPI+UEFI boot.
 
-        // Trigger a GPIO pin 3 event to satisfy use case 1.
-        self.gpio_device
-            .as_ref()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .trigger_key(3)
-            .map_err(DeviceManagerError::AArch64PowerButtonNotification)?;
-        // Trigger a GED power button event to satisfy use case 2.
         return self
             .ged_notification_device
             .as_ref()
