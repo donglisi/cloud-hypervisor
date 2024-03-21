@@ -162,9 +162,6 @@ impl KvmGicV3Its {
             .create_device(&mut its_device)
             .map_err(Error::CreateGic)?;
 
-        // We know vm is KvmVm
-        let its_fd = its_fd.to_kvm().unwrap();
-
         Self::set_device_attribute(
             &its_fd,
             kvm_bindings::KVM_DEV_ARM_VGIC_GRP_ADDR,
@@ -220,7 +217,7 @@ impl KvmGicV3Its {
             .map_err(Error::CreateGic)?;
 
         // We know for sure this is a KVM fd
-        Ok(device_fd.to_kvm().unwrap())
+        Ok(device_fd)
     }
 
     /// Set a GIC device attribute

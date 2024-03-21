@@ -91,7 +91,6 @@ pub use kvm_ioctls::{Cap, Kvm};
 #[cfg(target_arch = "aarch64")]
 use std::mem;
 use thiserror::Error;
-use vfio_ioctls::VfioDeviceFd;
 #[cfg(feature = "tdx")]
 use vmm_sys_util::{ioctl::ioctl_with_val, ioctl_ioc_nr, ioctl_iowr_nr};
 ///
@@ -368,12 +367,12 @@ impl KvmVm {
     /// Creates an emulated device in the kernel.
     ///
     /// See the documentation for `KVM_CREATE_DEVICE`.
-    fn create_device(&self, device: &mut CreateDevice) -> vm::Result<vfio_ioctls::VfioDeviceFd> {
+    fn create_device(&self, device: &mut CreateDevice) -> vm::Result<kvm_ioctls::DeviceFd> {
         let device_fd = self
             .fd
             .create_device(device)
             .map_err(|e| vm::HypervisorVmError::CreateDevice(e.into()))?;
-        Ok(VfioDeviceFd::new_from_kvm(device_fd))
+        Ok(device_fd)
     }
     /// Checks if a particular `Cap` is available.
     pub fn check_extension(&self, c: Cap) -> bool {
@@ -735,18 +734,6 @@ impl vm::Vm for KvmVm {
         self.fd
             .set_clock(&data)
             .map_err(|e| vm::HypervisorVmError::SetClock(e.into()))
-    }
-
-    /// Create a device that is used for passthrough
-    fn create_passthrough_device(&self) -> vm::Result<VfioDeviceFd> {
-        let mut vfio_dev = kvm_create_device {
-            type_: kvm_device_type_KVM_DEV_TYPE_VFIO,
-            fd: 0,
-            flags: 0,
-        };
-
-        self.create_device(&mut vfio_dev)
-            .map_err(|e| vm::HypervisorVmError::CreatePassthroughDevice(e.into()))
     }
 
     ///

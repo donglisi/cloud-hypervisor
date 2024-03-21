@@ -334,8 +334,6 @@ pub trait Vm: Send + Sync + Any {
     /// Set guest clock.
     #[cfg(target_arch = "x86_64")]
     fn set_clock(&self, data: &ClockData) -> Result<()>;
-    /// Create a device that is used for passthrough
-    fn create_passthrough_device(&self) -> Result<vfio_ioctls::VfioDeviceFd>;
     /// Start logging dirty pages
     fn start_dirty_log(&self) -> Result<()>;
     /// Stop logging dirty pages

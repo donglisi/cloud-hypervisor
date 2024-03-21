@@ -6,8 +6,8 @@ edition = "2021"
 license = "Apache-2.0 OR BSD-3-Clause"
 
 [features]
-kvm = ["kvm-ioctls", "kvm-bindings", "vfio-ioctls/kvm"]
-mshv = ["mshv-ioctls", "mshv-bindings", "vfio-ioctls/mshv", "iced-x86"]
+kvm = ["kvm-ioctls", "kvm-bindings"]
+mshv = ["mshv-ioctls", "mshv-bindings", "iced-x86"]
 sev_snp = ["igvm_parser", "igvm_defs"]
 tdx = []
 
@@ -24,7 +24,6 @@ mshv-bindings = { git = "https://github.com/rust-vmm/mshv", branch = "main", fea
 mshv-ioctls = { git = "https://github.com/rust-vmm/mshv", branch = "main", optional  = true}
 serde = { version = "1.0.196", features = ["rc", "derive"] }
 serde_with = { version = "3.4.0", default-features = false, features = ["macros"] }
-vfio-ioctls = { git = "https://github.com/rust-vmm/vfio", branch = "main", default-features = false }
 vm-memory = { version = "0.14.0", features = ["backend-mmap", "backend-atomic"] }
 vmm-sys-util = { version = "0.12.1", features = ["with-serde"] }
 thiserror = "1.0.52"

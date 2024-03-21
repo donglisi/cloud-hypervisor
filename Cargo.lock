@@ -998,7 +998,6 @@ dependencies = [
  "serde",
  "serde_with",
  "thiserror",
- "vfio-ioctls",
  "vm-memory",
  "vmm-sys-util",
 ]
