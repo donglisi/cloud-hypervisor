@@ -57,7 +57,6 @@ use libc::{
 use pci::{
     DeviceRelocation, PciBarRegionType, PciBdf, PciDevice,
 };
-use seccompiler::SeccompAction;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{read_link, File, OpenOptions};
@@ -787,9 +786,6 @@ pub struct DeviceManager {
     #[cfg(target_arch = "aarch64")]
     id_to_dev_info: HashMap<(DeviceType, String), MmioDeviceInfo>,
 
-    // seccomp action
-    seccomp_action: SeccompAction,
-
     // Virtio Device activation EventFd to allow the VMM thread to trigger device
     // activation and thus start the threads from the VMM thread
     activate_evt: EventFd,
@@ -836,7 +832,6 @@ impl DeviceManager {
         cpu_manager: Arc<Mutex<CpuManager>>,
         exit_evt: EventFd,
         reset_evt: EventFd,
-        seccomp_action: SeccompAction,
         numa_nodes: NumaNodes,
         activate_evt: &EventFd,
         force_iommu: bool,
@@ -993,7 +988,6 @@ impl DeviceManager {
             reset_evt,
             #[cfg(target_arch = "aarch64")]
             id_to_dev_info: HashMap::new(),
-            seccomp_action,
             activate_evt: activate_evt
                 .try_clone()
                 .map_err(DeviceManagerError::EventFd)?,
@@ -1804,7 +1798,6 @@ impl DeviceManager {
                 .as_ref()
                 .map(|p| p.try_clone().unwrap()),
             self.force_iommu | console_config.iommu,
-            self.seccomp_action.clone(),
             self.exit_evt
                 .try_clone()
                 .map_err(DeviceManagerError::EventFd)?,
@@ -2077,7 +2070,6 @@ impl DeviceManager {
                     disk_cfg.num_queues,
                     disk_cfg.queue_size,
                     disk_cfg.serial.clone(),
-                    self.seccomp_action.clone(),
                     self.exit_evt
                         .try_clone()
                         .map_err(DeviceManagerError::EventFd)?,
@@ -2161,7 +2153,6 @@ impl DeviceManager {
                         self.force_iommu | net_cfg.iommu,
                         net_cfg.num_queues,
                         net_cfg.queue_size,
-                        self.seccomp_action.clone(),
                         self.exit_evt
                             .try_clone()
                             .map_err(DeviceManagerError::EventFd)?,
@@ -2180,7 +2171,6 @@ impl DeviceManager {
                     net_cfg.mtu,
                     self.force_iommu | net_cfg.iommu,
                     net_cfg.queue_size,
-                    self.seccomp_action.clone(),
                     self.exit_evt
                         .try_clone()
                         .map_err(DeviceManagerError::EventFd)?,
@@ -2210,7 +2200,6 @@ impl DeviceManager {
                         self.force_iommu | net_cfg.iommu,
                         net_cfg.num_queues,
                         net_cfg.queue_size,
-                        self.seccomp_action.clone(),
                         self.exit_evt
                             .try_clone()
                             .map_err(DeviceManagerError::EventFd)?,
@@ -2274,7 +2263,6 @@ impl DeviceManager {
                     id.clone(),
                     rng_path,
                     self.force_iommu | rng_config.iommu,
-                    self.seccomp_action.clone(),
                     self.exit_evt
                         .try_clone()
                         .map_err(DeviceManagerError::EventFd)?,

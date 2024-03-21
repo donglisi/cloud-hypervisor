@@ -13,8 +13,7 @@ use super::{
     ActivateError, ActivateResult, EpollHelper, EpollHelperError, EpollHelperHandler, VirtioCommon,
     VirtioDevice, VirtioDeviceType, VirtioInterruptType, EPOLL_HELPER_EVENT_LAST,
 };
-use crate::seccomp_filters::Thread;
-use crate::thread_helper::spawn_virtio_thread;
+use crate::thread_helper::{spawn_virtio_thread};
 use crate::GuestMemoryMmap;
 use crate::VirtioInterrupt;
 use anyhow::anyhow;
@@ -22,7 +21,6 @@ use block::{
     async_io::AsyncIo, async_io::AsyncIoError, async_io::DiskFile, build_serial, Request,
     RequestType, VirtioBlockConfig,
 };
-use seccompiler::SeccompAction;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::io;
@@ -480,7 +478,6 @@ pub struct Block {
     config: VirtioBlockConfig,
     writeback: Arc<AtomicBool>,
     counters: BlockCounters,
-    seccomp_action: SeccompAction,
     exit_evt: EventFd,
     read_only: bool,
     serial: Vec<u8>,
@@ -510,7 +507,6 @@ impl Block {
         num_queues: usize,
         queue_size: u16,
         serial: Option<String>,
-        seccomp_action: SeccompAction,
         exit_evt: EventFd,
         state: Option<BlockState>,
         queue_affinity: BTreeMap<u16, Vec<usize>>,
@@ -612,7 +608,6 @@ impl Block {
             config,
             writeback: Arc::new(AtomicBool::new(true)),
             counters: BlockCounters::default(),
-            seccomp_action,
             exit_evt,
             read_only,
             serial,
@@ -755,8 +750,6 @@ impl VirtioDevice for Block {
 
             spawn_virtio_thread(
                 &format!("{}_q{}", self.id.clone(), i),
-                &self.seccomp_action,
-                Thread::VirtioBlock,
                 &mut epoll_threads,
                 &self.exit_evt,
                 move || handler.run(paused, paused_sync.unwrap()),

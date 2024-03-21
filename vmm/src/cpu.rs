@@ -63,7 +63,6 @@ use hypervisor::{CpuState, HypervisorCpuError, HypervisorType, VmExit, VmOps};
 use libc::{c_void, siginfo_t};
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use linux_loader::elf::Elf64_Nhdr;
-use seccompiler::{SeccompAction};
 use std::collections::BTreeMap;
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use std::io::Write;
@@ -636,7 +635,6 @@ impl CpuManager {
         reset_evt: EventFd,
         #[cfg(feature = "guest_debug")] vm_debug_evt: EventFd,
         hypervisor: &Arc<dyn hypervisor::Hypervisor>,
-        seccomp_action: SeccompAction,
         vm_ops: Arc<dyn VmOps>,
         #[cfg(feature = "tdx")] tdx_enabled: bool,
         numa_nodes: &NumaNodes,

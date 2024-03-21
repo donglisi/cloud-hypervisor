@@ -8,12 +8,10 @@ use super::{
     VirtioDevice, VirtioDeviceType, EPOLL_HELPER_EVENT_LAST, VIRTIO_F_IOMMU_PLATFORM,
     VIRTIO_F_VERSION_1,
 };
-use crate::seccomp_filters::Thread;
-use crate::thread_helper::spawn_virtio_thread;
+use crate::thread_helper::{spawn_virtio_thread};
 use crate::GuestMemoryMmap;
 use crate::{VirtioInterrupt, VirtioInterruptType};
 use anyhow::anyhow;
-use seccompiler::SeccompAction;
 use std::fs::File;
 use std::io;
 use std::os::unix::io::AsRawFd;
@@ -154,7 +152,6 @@ pub struct Rng {
     common: VirtioCommon,
     id: String,
     random_file: Option<File>,
-    seccomp_action: SeccompAction,
     exit_evt: EventFd,
 }
 
@@ -172,7 +169,6 @@ impl Rng {
         id: String,
         path: &str,
         iommu: bool,
-        seccomp_action: SeccompAction,
         exit_evt: EventFd,
         state: Option<RngState>,
     ) -> io::Result<Rng> {
@@ -204,7 +200,6 @@ impl Rng {
             },
             id,
             random_file: Some(random_file),
-            seccomp_action,
             exit_evt,
         })
     }
@@ -282,8 +277,6 @@ impl VirtioDevice for Rng {
             let mut epoll_threads = Vec::new();
             spawn_virtio_thread(
                 &self.id,
-                &self.seccomp_action,
-                Thread::VirtioRng,
                 &mut epoll_threads,
                 &self.exit_evt,
                 move || handler.run(paused, paused_sync.unwrap()),

@@ -7,13 +7,11 @@ use super::{
     VirtioDeviceType, VirtioInterruptType, EPOLL_HELPER_EVENT_LAST, VIRTIO_F_IOMMU_PLATFORM,
     VIRTIO_F_VERSION_1,
 };
-use crate::seccomp_filters::Thread;
-use crate::thread_helper::spawn_virtio_thread;
+use crate::thread_helper::{spawn_virtio_thread};
 use crate::GuestMemoryMmap;
 use crate::VirtioInterrupt;
 use anyhow::anyhow;
 use libc::{EFD_NONBLOCK, TIOCGWINSZ};
-use seccompiler::SeccompAction;
 use serial_buffer::SerialBuffer;
 use std::cmp;
 use std::collections::VecDeque;
@@ -588,7 +586,6 @@ pub struct Console {
     resizer: Arc<ConsoleResizer>,
     resize_pipe: Option<File>,
     endpoint: Endpoint,
-    seccomp_action: SeccompAction,
     in_buffer: Arc<Mutex<VecDeque<u8>>>,
     exit_evt: EventFd,
 }
@@ -629,7 +626,6 @@ impl Console {
         endpoint: Endpoint,
         resize_pipe: Option<File>,
         iommu: bool,
-        seccomp_action: SeccompAction,
         exit_evt: EventFd,
         state: Option<ConsoleState>,
     ) -> io::Result<(Console, Arc<ConsoleResizer>)> {
@@ -686,7 +682,6 @@ impl Console {
                 resizer: resizer.clone(),
                 resize_pipe,
                 endpoint,
-                seccomp_action,
                 in_buffer: Arc::new(Mutex::new(in_buffer)),
                 exit_evt,
             },
@@ -785,8 +780,6 @@ impl VirtioDevice for Console {
 
         spawn_virtio_thread(
             &self.id,
-            &self.seccomp_action,
-            Thread::VirtioConsole,
             &mut epoll_threads,
             &self.exit_evt,
             move || handler.run(paused, paused_sync.unwrap()),

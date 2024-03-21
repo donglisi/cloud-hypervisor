@@ -24,7 +24,6 @@ mod console;
 pub mod epoll_helper;
 pub mod net;
 mod rng;
-pub mod seccomp_filters;
 mod thread_helper;
 pub mod transport;
 

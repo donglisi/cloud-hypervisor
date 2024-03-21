@@ -11,8 +11,7 @@ use super::{
     VirtioCommon, VirtioDevice, VirtioDeviceType, VirtioInterruptType,
     EPOLL_HELPER_EVENT_LAST,
 };
-use crate::seccomp_filters::Thread;
-use crate::thread_helper::spawn_virtio_thread;
+use crate::thread_helper::{spawn_virtio_thread};
 use crate::GuestMemoryMmap;
 use crate::VirtioInterrupt;
 use anyhow::anyhow;
@@ -23,7 +22,6 @@ use net_util::{
     build_net_config_space, build_net_config_space_with_mq, open_tap, MacAddr, NetCounters,
     NetQueuePair, OpenTapError, RxVirtio, Tap, TapError, TxVirtio, VirtioNetConfig,
 };
-use seccompiler::SeccompAction;
 use std::net::Ipv4Addr;
 use std::num::Wrapping;
 use std::ops::Deref;
@@ -344,7 +342,6 @@ pub struct Net {
     config: VirtioNetConfig,
     ctrl_queue_epoll_thread: Option<thread::JoinHandle<()>>,
     counters: NetCounters,
-    seccomp_action: SeccompAction,
     exit_evt: EventFd,
 }
 
@@ -368,7 +365,6 @@ impl Net {
         iommu: bool,
         num_queues: usize,
         queue_size: u16,
-        seccomp_action: SeccompAction,
         exit_evt: EventFd,
         state: Option<NetState>,
         offload_tso: bool,
@@ -463,7 +459,6 @@ impl Net {
             config,
             ctrl_queue_epoll_thread: None,
             counters: NetCounters::default(),
-            seccomp_action,
             exit_evt,
         })
     }
@@ -482,7 +477,6 @@ impl Net {
         iommu: bool,
         num_queues: usize,
         queue_size: u16,
-        seccomp_action: SeccompAction,
         exit_evt: EventFd,
         state: Option<NetState>,
         offload_tso: bool,
@@ -507,7 +501,6 @@ impl Net {
             iommu,
             num_queues,
             queue_size,
-            seccomp_action,
             exit_evt,
             state,
             offload_tso,
@@ -524,7 +517,6 @@ impl Net {
         mtu: Option<u16>,
         iommu: bool,
         queue_size: u16,
-        seccomp_action: SeccompAction,
         exit_evt: EventFd,
         state: Option<NetState>,
         offload_tso: bool,
@@ -558,7 +550,6 @@ impl Net {
             iommu,
             num_queue_pairs * 2,
             queue_size,
-            seccomp_action,
             exit_evt,
             state,
             offload_tso,
@@ -658,8 +649,6 @@ impl VirtioDevice for Net {
             let mut epoll_threads = Vec::new();
             spawn_virtio_thread(
                 &format!("{}_ctrl", &self.id),
-                &self.seccomp_action,
-                Thread::VirtioNetCtl,
                 &mut epoll_threads,
                 &self.exit_evt,
                 move || ctrl_handler.run_ctrl(paused, paused_sync.unwrap()),
@@ -722,8 +711,6 @@ impl VirtioDevice for Net {
 
             spawn_virtio_thread(
                 &format!("{}_qp{}", self.id.clone(), i),
-                &self.seccomp_action,
-                Thread::VirtioNet,
                 &mut epoll_threads,
                 &self.exit_evt,
                 move || handler.run(paused, paused_sync.unwrap()),

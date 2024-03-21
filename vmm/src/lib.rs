@@ -27,7 +27,6 @@ use api::dbus::{DBusApiOptions, DBusApiShutdownChannels};
 use libc::{tcsetattr, termios, EFD_NONBLOCK, SIGINT, SIGTERM, TCSANOW};
 use memory_manager::MemoryManagerSnapshotData;
 use pci::PciBdf;
-use seccompiler::{SeccompAction};
 use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 use signal_hook::iterator::{Handle, Signals};
@@ -328,7 +327,6 @@ pub fn start_vmm_thread(
     #[cfg(feature = "guest_debug")] debug_event: EventFd,
     #[cfg(feature = "guest_debug")] vm_debug_event: EventFd,
     exit_event: EventFd,
-    seccomp_action: &SeccompAction,
     hypervisor: Arc<dyn hypervisor::Hypervisor>,
 ) -> Result<VmmThreadHandle> {
     #[cfg(feature = "guest_debug")]
@@ -343,7 +341,6 @@ pub fn start_vmm_thread(
     let api_event_clone = api_event.try_clone().map_err(Error::EventFdClone)?;
     let hypervisor_type = hypervisor.hypervisor_type();
 
-    let vmm_seccomp_action = seccomp_action.clone();
     let thread = {
         let exit_event = exit_event.try_clone().map_err(Error::EventFdClone)?;
         thread::Builder::new()
@@ -356,7 +353,6 @@ pub fn start_vmm_thread(
                     debug_event,
                     #[cfg(feature = "guest_debug")]
                     vm_debug_event,
-                    vmm_seccomp_action,
                     hypervisor,
                     exit_event,
                 )?;
@@ -381,7 +377,6 @@ pub fn start_vmm_thread(
                 opts,
                 api_event_clone.try_clone().map_err(Error::EventFdClone)?,
                 api_sender.clone(),
-                seccomp_action,
                 exit_event.try_clone().map_err(Error::EventFdClone)?,
                 hypervisor_type,
             )?;
@@ -452,7 +447,6 @@ pub struct Vmm {
     version: VmmVersionInfo,
     vm: Option<Vm>,
     vm_config: Option<Arc<Mutex<VmConfig>>>,
-    seccomp_action: SeccompAction,
     hypervisor: Arc<dyn hypervisor::Hypervisor>,
     activate_evt: EventFd,
     signals: Option<Handle>,
@@ -530,7 +524,6 @@ impl Vmm {
         api_evt: EventFd,
         #[cfg(feature = "guest_debug")] debug_evt: EventFd,
         #[cfg(feature = "guest_debug")] vm_debug_evt: EventFd,
-        seccomp_action: SeccompAction,
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
         exit_evt: EventFd,
     ) -> Result<Self> {
@@ -571,7 +564,6 @@ impl Vmm {
             version: vmm_version,
             vm: None,
             vm_config: None,
-            seccomp_action,
             hypervisor,
             activate_evt,
             signals: None,
@@ -694,7 +686,6 @@ impl Vmm {
             reset_evt,
             #[cfg(feature = "guest_debug")]
             debug_evt,
-            &self.seccomp_action,
             self.hypervisor.clone(),
             activate_evt,
             timestamp,
@@ -1137,7 +1128,6 @@ impl RequestHandler for Vmm {
                         reset_evt,
                         #[cfg(feature = "guest_debug")]
                         vm_debug_evt,
-                        &self.seccomp_action,
                         self.hypervisor.clone(),
                         activate_evt,
                         None,
@@ -1236,7 +1226,6 @@ impl RequestHandler for Vmm {
             reset_evt,
             #[cfg(feature = "guest_debug")]
             debug_evt,
-            &self.seccomp_action,
             self.hypervisor.clone(),
             activate_evt,
             None,
@@ -1325,7 +1314,6 @@ impl RequestHandler for Vmm {
             reset_evt,
             #[cfg(feature = "guest_debug")]
             debug_evt,
-            &self.seccomp_action,
             self.hypervisor.clone(),
             activate_evt,
             serial_pty,

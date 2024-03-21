@@ -7,8 +7,6 @@ use clap::{Arg, ArgAction, ArgGroup, ArgMatches, Command};
 use libc::EFD_NONBLOCK;
 use log::{warn, LevelFilter};
 use option_parser::OptionParser;
-use seccompiler::SeccompAction;
-use signal_hook::consts::SIGSYS;
 use std::env;
 use std::os::unix::io::{RawFd};
 use std::sync::mpsc::channel;
@@ -504,36 +502,6 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
     let api_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateApiEventFd)?;
 
     let api_request_sender_clone = api_request_sender.clone();
-    let seccomp_action = if let Some(seccomp_value) = cmd_arguments.get_one::<String>("seccomp") {
-        match seccomp_value as &str {
-            "true" => SeccompAction::Trap,
-            "false" => SeccompAction::Allow,
-            "log" => SeccompAction::Log,
-            val => {
-                // The user providing an invalid value will be rejected
-                panic!("Invalid parameter {val} for \"--seccomp\" flag");
-            }
-        }
-    } else {
-        SeccompAction::Trap
-    };
-
-    if seccomp_action == SeccompAction::Trap {
-        // SAFETY: We only using signal_hook for managing signals and only execute signal
-        // handler safe functions (writing to stderr) and manipulating signals.
-        unsafe {
-            signal_hook::low_level::register(signal_hook::consts::SIGSYS, || {
-                eprint!(
-                    "\n==== Possible seccomp violation ====\n\
-                Try running with `strace -ff` to identify the cause and open an issue: \
-                https://github.com/cloud-hypervisor/cloud-hypervisor/issues/new\n"
-                );
-                signal_hook::low_level::emulate_default_handler(SIGSYS).unwrap();
-            })
-        }
-        .map_err(|e| eprintln!("Error adding SIGSYS signal handler: {e}"))
-        .ok();
-    }
 
     // Before we start any threads, mask the signals we'll be
     // installing handlers for, to make sure they only ever run on the
@@ -589,7 +557,6 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
         #[cfg(feature = "guest_debug")]
         vm_debug_evt.try_clone().unwrap(),
         exit_evt.try_clone().unwrap(),
-        &seccomp_action,
         hypervisor,
     )
     .map_err(Error::StartVmmThread)?;

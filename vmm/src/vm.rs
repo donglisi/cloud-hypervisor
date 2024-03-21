@@ -66,7 +66,6 @@ use linux_loader::loader::elf::PvhBootCapability::PvhEntryPresent;
 #[cfg(target_arch = "aarch64")]
 use linux_loader::loader::pe::Error::InvalidImageMagicNumber;
 use linux_loader::loader::KernelLoader;
-use seccompiler::SeccompAction;
 use serde::{Deserialize, Serialize};
 use std::cmp;
 use std::collections::BTreeMap;
@@ -472,7 +471,6 @@ impl Vm {
         exit_evt: EventFd,
         reset_evt: EventFd,
         #[cfg(feature = "guest_debug")] vm_debug_evt: EventFd,
-        seccomp_action: &SeccompAction,
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
         activate_evt: EventFd,
         timestamp: Instant,
@@ -539,7 +537,6 @@ impl Vm {
             #[cfg(feature = "guest_debug")]
             vm_debug_evt,
             &hypervisor,
-            seccomp_action.clone(),
             vm_ops,
             #[cfg(feature = "tdx")]
             tdx_enabled,
@@ -613,7 +610,6 @@ impl Vm {
             cpu_manager.clone(),
             exit_evt.try_clone().map_err(Error::EventFdClone)?,
             reset_evt,
-            seccomp_action.clone(),
             numa_nodes.clone(),
             &activate_evt,
             force_iommu,
@@ -745,7 +741,6 @@ impl Vm {
         exit_evt: EventFd,
         reset_evt: EventFd,
         #[cfg(feature = "guest_debug")] vm_debug_evt: EventFd,
-        seccomp_action: &SeccompAction,
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
         activate_evt: EventFd,
         serial_pty: Option<PtyPair>,
@@ -822,7 +817,6 @@ impl Vm {
             reset_evt,
             #[cfg(feature = "guest_debug")]
             vm_debug_evt,
-            seccomp_action,
             hypervisor,
             activate_evt,
             timestamp,
