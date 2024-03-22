@@ -10,8 +10,8 @@ dbus_api = ["blocking", "futures", "zbus"]
 guest_debug = ["kvm", "gdbstub", "gdbstub_arch"]
 igvm = ["hex", "igvm_parser", "igvm_defs",  "mshv-bindings", "range_map_vec"]
 io_uring = ["block/io_uring"]
-kvm = ["hypervisor/kvm", "vm-device/kvm", "pci/kvm"]
-mshv = ["hypervisor/mshv", "vm-device/mshv", "pci/mshv"]
+kvm = ["hypervisor/kvm", "vm-device/kvm"]
+mshv = ["hypervisor/mshv", "vm-device/mshv"]
 sev_snp = ["arch/sev_snp", "hypervisor/sev_snp"]
 tdx = ["arch/tdx", "hypervisor/tdx"]
 
@@ -42,7 +42,6 @@ micro_http = { git = "https://github.com/firecracker-microvm/micro-http", branch
 mshv-bindings = { git = "https://github.com/rust-vmm/mshv", branch = "main", features = ["with-serde", "fam-wrappers"], optional  = true }
 once_cell = "1.19.0"
 option_parser = { path = "../option_parser" }
-pci = { path = "../pci" }
 range_map_vec = { version = "0.1.0", optional = true }
 seccompiler = "0.4.0"
 serde = { version = "1.0.196", features = ["rc", "derive"] }

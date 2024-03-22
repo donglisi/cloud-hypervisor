@@ -79,7 +79,6 @@ members = [
     "devices",
     "hypervisor",
     "option_parser",
-    "pci",
     "serial_buffer",
     "vmm",
     "vm-allocator",

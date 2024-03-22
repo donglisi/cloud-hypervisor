@@ -26,7 +26,6 @@ use anyhow::anyhow;
 use api::dbus::{DBusApiOptions, DBusApiShutdownChannels};
 use libc::{tcsetattr, termios, EFD_NONBLOCK, SIGINT, SIGTERM, TCSANOW};
 use memory_manager::MemoryManagerSnapshotData;
-use pci::PciBdf;
 use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 use signal_hook::iterator::{Handle, Signals};
@@ -262,22 +261,6 @@ impl AsRawFd for EpollContext {
 
 pub struct PciDeviceInfo {
     pub id: String,
-    pub bdf: PciBdf,
-}
-
-impl Serialize for PciDeviceInfo {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let bdf_str = self.bdf.to_string();
-
-        // Serialize the structure.
-        let mut state = serializer.serialize_struct("PciDeviceInfo", 2)?;
-        state.serialize_field("id", &self.id)?;
-        state.serialize_field("bdf", &bdf_str)?;
-        state.end()
-    }
 }
 
 pub fn feature_list() -> Vec<String> {

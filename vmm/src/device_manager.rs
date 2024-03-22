@@ -42,9 +42,6 @@ use libc::{
     cfmakeraw, isatty, tcgetattr, tcsetattr, termios,
     TCSANOW,
 };
-use pci::{
-    DeviceRelocation, PciBarRegionType, PciBdf, PciDevice,
-};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap};
 use std::fs::{read_link, File, OpenOptions};
@@ -116,20 +113,11 @@ pub enum DeviceManagerError {
     /// Cannot configure the IRQ.
     Irq(vmm_sys_util::errno::Error),
 
-    /// Cannot allocate PCI BARs
-    AllocateBars(pci::PciDeviceError),
-
-    /// Could not free the BARs associated with a PCI device.
-    FreePciBars(pci::PciDeviceError),
-
     /// Cannot register ioevent.
     RegisterIoevent(anyhow::Error),
 
     /// Cannot unregister ioevent.
     UnRegisterIoevent(anyhow::Error),
-
-    /// Cannot add PCI device
-    AddPciDevice(pci::PciRootError),
 
     /// Cannot open persistent memory file
     PmemFileOpen(io::Error),
@@ -219,9 +207,6 @@ pub enum DeviceManagerError {
     /// Missing PCI device.
     MissingPciDevice,
 
-    /// Failed to remove a PCI device from the PCI bus.
-    RemoveDeviceFromPciBus(pci::PciRootError),
-
     /// Failed to remove a bus device from the IO bus.
     RemoveDeviceFromIoBus(vm_device::BusError),
 
@@ -236,15 +221,6 @@ pub enum DeviceManagerError {
 
     /// Failed to find device corresponding to the given identifier.
     UnknownDeviceId(String),
-
-    /// Failed to find an available PCI device ID.
-    NextPciDeviceId(pci::PciRootError),
-
-    /// Could not reserve the PCI device ID.
-    GetPciDeviceId(pci::PciRootError),
-
-    /// Could not give the PCI device ID back.
-    PutPciDeviceId(pci::PciRootError),
 
     /// No disk path was specified when one was expected
     NoDiskPath,
@@ -305,9 +281,6 @@ pub enum DeviceManagerError {
 
     /// Failed retrieving device state from snapshot
     RestoreGetState(MigratableError),
-
-    /// Cannot create a PvPanic device
-    PvPanicCreate(devices::pvpanic::PvPanicError),
 }
 
 pub type DeviceManagerResult<T> = result::Result<T, DeviceManagerError>;
@@ -377,119 +350,6 @@ pub(crate) struct AddressManager {
     device_tree: Arc<Mutex<DeviceTree>>,
     pci_mmio32_allocators: Vec<Arc<Mutex<AddressAllocator>>>,
     pci_mmio64_allocators: Vec<Arc<Mutex<AddressAllocator>>>,
-}
-
-impl DeviceRelocation for AddressManager {
-    fn move_bar(
-        &self,
-        old_base: u64,
-        new_base: u64,
-        len: u64,
-        pci_dev: &mut dyn PciDevice,
-        region_type: PciBarRegionType,
-    ) -> std::result::Result<(), std::io::Error> {
-        match region_type {
-            PciBarRegionType::IoRegion => {
-                #[cfg(target_arch = "x86_64")]
-                {
-                    // Update system allocator
-                    self.allocator
-                        .lock()
-                        .unwrap()
-                        .free_io_addresses(GuestAddress(old_base), len as GuestUsize);
-
-                    self.allocator
-                        .lock()
-                        .unwrap()
-                        .allocate_io_addresses(
-                            Some(GuestAddress(new_base)),
-                            len as GuestUsize,
-                            None,
-                        )
-                        .ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::Other, "failed allocating new IO range")
-                        })?;
-
-                    // Update PIO bus
-                    self.io_bus
-                        .update_range(old_base, len, new_base, len)
-                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-                }
-                #[cfg(target_arch = "aarch64")]
-                error!("I/O region is not supported");
-            }
-            PciBarRegionType::Memory32BitRegion | PciBarRegionType::Memory64BitRegion => {
-                let allocators = if region_type == PciBarRegionType::Memory32BitRegion {
-                    &self.pci_mmio32_allocators
-                } else {
-                    &self.pci_mmio64_allocators
-                };
-
-                // Find the specific allocator that this BAR was allocated from and use it for new one
-                for allocator in allocators {
-                    let allocator_base = allocator.lock().unwrap().base();
-                    let allocator_end = allocator.lock().unwrap().end();
-
-                    if old_base >= allocator_base.0 && old_base <= allocator_end.0 {
-                        allocator
-                            .lock()
-                            .unwrap()
-                            .free(GuestAddress(old_base), len as GuestUsize);
-
-                        allocator
-                            .lock()
-                            .unwrap()
-                            .allocate(Some(GuestAddress(new_base)), len as GuestUsize, Some(len))
-                            .ok_or_else(|| {
-                                io::Error::new(
-                                    io::ErrorKind::Other,
-                                    "failed allocating new MMIO range",
-                                )
-                            })?;
-
-                        break;
-                    }
-                }
-
-                // Update MMIO bus
-                self.mmio_bus
-                    .update_range(old_base, len, new_base, len)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            }
-        }
-
-        // Update the device_tree resources associated with the device
-        if let Some(id) = pci_dev.id() {
-            if let Some(node) = self.device_tree.lock().unwrap().get_mut(&id) {
-                let mut resource_updated = false;
-                for resource in node.resources.iter_mut() {
-                    if let Resource::PciBar { base, type_, .. } = resource {
-                        if PciBarRegionType::from(*type_) == region_type && *base == old_base {
-                            *base = new_base;
-                            resource_updated = true;
-                            break;
-                        }
-                    }
-                }
-
-                if !resource_updated {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!(
-                            "Couldn't find a resource with base 0x{old_base:x} for device {id}"
-                        ),
-                    ));
-                }
-            } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("Couldn't find device {id} from device tree"),
-                ));
-            }
-        }
-
-        pci_dev.move_bar(old_base, new_base)
-    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -578,12 +438,6 @@ pub struct DeviceManager {
     #[cfg_attr(feature = "mshv", allow(dead_code))]
     // Legacy Interrupt Manager
     legacy_interrupt_manager: Option<Arc<dyn InterruptManager<GroupConfig = LegacyIrqGroupConfig>>>,
-
-    // PCI information about devices attached to the paravirtualized IOMMU
-    // It contains the virtual IOMMU PCI BDF along with the list of PCI BDF
-    // representing the devices attached to the virtual IOMMU. This is useful
-    // information for filling the ACPI VIOT table.
-    iommu_attached_devices: Option<(PciBdf, Vec<PciBdf>)>,
 
     // Tree of devices, representing the dependencies between devices.
     // Useful for introspection, snapshot and restore.
@@ -737,7 +591,6 @@ impl DeviceManager {
             device_id_cnt,
             msi_interrupt_manager,
             legacy_interrupt_manager: None,
-            iommu_attached_devices: None,
             device_tree,
             exit_evt,
             reset_evt,
@@ -1524,27 +1377,6 @@ impl DeviceManager {
             .map_err(DeviceManagerError::HotPlugNotification);
     }
 
-    pub fn eject_device(&mut self, pci_segment_id: u16, device_id: u8) -> DeviceManagerResult<()> {
-        info!(
-            "Ejecting device_id = {} on segment_id={}",
-            device_id, pci_segment_id
-        );
-
-        // Convert the device ID into the corresponding b/d/f.
-        let pci_device_bdf = PciBdf::new(pci_segment_id, 0, device_id, 0);
-
-        if let Some((_, iommu_attached_devices)) = &self.iommu_attached_devices {
-            if iommu_attached_devices.contains(&pci_device_bdf) {
-            }
-        }
-
-        // At this point, the device has been removed from all the list and
-        // buses where it was stored. At the end of this function, after
-        // any_device, bus_device and pci_device are released, the actual
-        // device will be dropped.
-        Ok(())
-    }
-
     pub fn counters(&self) -> HashMap<String, HashMap<&'static str, Wrapping<u64>>> {
         let counters = HashMap::new();
 
@@ -1580,10 +1412,6 @@ impl DeviceManager {
             .unwrap()
             .notify(AcpiNotificationFlags::POWER_BUTTON_CHANGED)
             .map_err(DeviceManagerError::PowerButtonNotification);
-    }
-
-    pub fn iommu_attached_devices(&self) -> &Option<(PciBdf, Vec<PciBdf>)> {
-        &self.iommu_attached_devices
     }
 }
 
@@ -1894,14 +1722,6 @@ impl BusDevice for DeviceManager {
                 let mut data_array: [u8; 4] = [0, 0, 0, 0];
                 data_array.copy_from_slice(data);
                 let mut slot_bitmap = u32::from_le_bytes(data_array);
-
-                while slot_bitmap > 0 {
-                    let slot_id = slot_bitmap.trailing_zeros();
-                    if let Err(e) = self.eject_device(self.selected_segment as u16, slot_id as u8) {
-                        error!("Failed ejecting device {}: {:?}", slot_id, e);
-                    }
-                    slot_bitmap &= !(1 << slot_id);
-                }
             }
             _ => error!(
                 "Accessing unknown location at base 0x{:x}, offset 0x{:x}",

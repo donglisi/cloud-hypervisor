@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use pci::PciBdf;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -17,7 +16,6 @@ pub struct DeviceNode {
     pub children: Vec<String>,
     #[serde(skip)]
     pub migratable: Option<Arc<Mutex<dyn Migratable>>>,
-    pub pci_bdf: Option<PciBdf>,
 }
 
 impl DeviceNode {
@@ -28,7 +26,6 @@ impl DeviceNode {
             parent: None,
             children: Vec::new(),
             migratable,
-            pci_bdf: None,
         }
     }
 }
@@ -73,22 +70,6 @@ impl DeviceTree {
     }
     pub fn breadth_first_traversal(&self) -> BftIter {
         BftIter::new(&self.0)
-    }
-
-    pub fn remove_node_by_pci_bdf(&mut self, pci_bdf: PciBdf) -> Option<DeviceNode> {
-        let mut id = None;
-        for (k, v) in self.0.iter() {
-            if v.pci_bdf == Some(pci_bdf) {
-                id = Some(k.clone());
-                break;
-            }
-        }
-
-        if let Some(id) = &id {
-            self.0.remove(id)
-        } else {
-            None
-        }
     }
 }
 

@@ -582,7 +582,6 @@ dependencies = [
  "hypervisor",
  "libc",
  "log",
- "pci",
  "thiserror",
  "versionize",
  "versionize_derive",
@@ -1366,26 +1365,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "de3145af08024dea9fa9914f381a17b8fc6034dfb00f3a84013f7ff43f29ed4c"
 
 [[package]]
-name = "pci"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "byteorder",
- "hypervisor",
- "libc",
- "log",
- "serde",
- "thiserror",
- "versionize",
- "versionize_derive",
- "vm-allocator",
- "vm-device",
- "vm-memory",
- "vm-migration",
- "vmm-sys-util",
-]
-
-[[package]]
 name = "pin-project"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2117,7 +2096,6 @@ dependencies = [
  "mshv-bindings",
  "once_cell",
  "option_parser",
- "pci",
  "range_map_vec",
  "seccompiler",
  "serde",
