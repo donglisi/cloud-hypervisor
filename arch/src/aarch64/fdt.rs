@@ -220,7 +220,6 @@ pub fn create_fdt<T: DeviceInfoForFdt + Clone + Debug, S: ::std::hash::BuildHash
     device_info: &HashMap<(DeviceType, String), T, S>,
     gic_device: &Arc<Mutex<dyn Vgic>>,
     initrd: &Option<InitramfsConfig>,
-    numa_nodes: &NumaNodes,
     pmu_supported: bool,
 ) -> FdtWriterResult<Vec<u8>> {
     // Allocate stuff necessary for the holding the blob.
@@ -240,8 +239,8 @@ pub fn create_fdt<T: DeviceInfoForFdt + Clone + Debug, S: ::std::hash::BuildHash
     // This is not mandatory but we use it to point the root node to the node
     // containing description of the interrupt controller for this VM.
     fdt.property_u32("interrupt-parent", GIC_PHANDLE)?;
-    create_cpu_nodes(&mut fdt, &vcpu_mpidr, vcpu_topology, numa_nodes)?;
-    create_memory_node(&mut fdt, guest_mem, numa_nodes)?;
+    create_cpu_nodes(&mut fdt, &vcpu_mpidr, vcpu_topology)?;
+    create_memory_node(&mut fdt, guest_mem)?;
     create_chosen_node(&mut fdt, cmdline, initrd)?;
     create_gic_node(&mut fdt, gic_device)?;
     create_timer_node(&mut fdt)?;
@@ -251,9 +250,6 @@ pub fn create_fdt<T: DeviceInfoForFdt + Clone + Debug, S: ::std::hash::BuildHash
     create_clock_node(&mut fdt)?;
     create_psci_node(&mut fdt)?;
     create_devices_node(&mut fdt, device_info)?;
-    if numa_nodes.len() > 1 {
-        create_distance_map_node(&mut fdt, numa_nodes)?;
-    }
 
     // End Header node.
     fdt.end_node(root_node)?;
@@ -276,7 +272,6 @@ fn create_cpu_nodes(
     fdt: &mut FdtWriter,
     vcpu_mpidr: &[u64],
     vcpu_topology: Option<(u8, u8, u8)>,
-    numa_nodes: &NumaNodes,
 ) -> FdtWriterResult<()> {
     // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/cpus.yaml.
     let cpus_node = fdt.begin_node("cpus")?;
@@ -360,16 +355,6 @@ fn create_cpu_nodes(
         // See http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0488c/BABHBJCI.html.
         fdt.property_u32("reg", (mpidr & 0x7FFFFF) as u32)?;
         fdt.property_u32("phandle", cpu_id as u32 + FIRST_VCPU_PHANDLE)?;
-
-        // Add `numa-node-id` property if there is any numa config.
-        if numa_nodes.len() > 1 {
-            for numa_node_idx in 0..numa_nodes.len() {
-                let numa_node = numa_nodes.get(&(numa_node_idx as u32));
-                if numa_node.unwrap().cpus.contains(&(cpu_id as u8)) {
-                    fdt.property_u32("numa-node-id", numa_node_idx as u32)?;
-                }
-            }
-        }
 
         if cache_exist && l1_d_cache_size != 0 && l1_i_cache_size != 0 {
             // Add cache info.
@@ -501,35 +486,8 @@ fn create_cpu_nodes(
 fn create_memory_node(
     fdt: &mut FdtWriter,
     guest_mem: &GuestMemoryMmap,
-    numa_nodes: &NumaNodes,
 ) -> FdtWriterResult<()> {
-    // See https://github.com/torvalds/linux/blob/58ae0b51506802713aa0e9956d1853ba4c722c98/Documentation/devicetree/bindings/numa.txt
-    // for NUMA setting in memory node.
-    if numa_nodes.len() > 1 {
-        for numa_node_idx in 0..numa_nodes.len() {
-            let numa_node = numa_nodes.get(&(numa_node_idx as u32));
-            let mut mem_reg_prop: Vec<u64> = Vec::new();
-            let mut node_memory_addr: u64 = 0;
-            // Each memory zone of numa will have its own memory node, but
-            // different numa nodes should not share same memory zones.
-            for memory_region in numa_node.unwrap().memory_regions.iter() {
-                let memory_region_start_addr: u64 = memory_region.start_addr().raw_value();
-                let memory_region_size: u64 = memory_region.size() as u64;
-                mem_reg_prop.push(memory_region_start_addr);
-                mem_reg_prop.push(memory_region_size);
-                // Set the node address the first non-zero regison address
-                if node_memory_addr == 0 {
-                    node_memory_addr = memory_region_start_addr;
-                }
-            }
-            let memory_node_name = format!("memory@{node_memory_addr:x}");
-            let memory_node = fdt.begin_node(&memory_node_name)?;
-            fdt.property_string("device_type", "memory")?;
-            fdt.property_array_u64("reg", &mem_reg_prop)?;
-            fdt.property_u32("numa-node-id", numa_node_idx as u32)?;
-            fdt.end_node(memory_node)?;
-        }
-    } else {
+    {
         // Note: memory regions from "GuestMemory" are sorted and non-zero sized.
         let ram_regions = {
             let mut ram_regions = Vec::new();
@@ -873,47 +831,6 @@ fn create_pmu_node(fdt: &mut FdtWriter) -> FdtWriterResult<()> {
     fdt.property_string("compatible", compatible)?;
     fdt.property_array_u32("interrupts", &irq)?;
     fdt.end_node(pmu_node)?;
-    Ok(())
-}
-
-fn create_distance_map_node(fdt: &mut FdtWriter, numa_nodes: &NumaNodes) -> FdtWriterResult<()> {
-    let distance_map_node = fdt.begin_node("distance-map")?;
-    fdt.property_string("compatible", "numa-distance-map-v1")?;
-    // Construct the distance matrix.
-    // 1. We use the word entry to describe a distance from a node to
-    // its destination, e.g. 0 -> 1 = 20 is described as <0 1 20>.
-    // 2. Each entry represents distance from first node to second node.
-    // The distances are equal in either direction.
-    // 3. The distance from a node to self (local distance) is represented
-    // with value 10 and all internode distance should be represented with
-    // a value greater than 10.
-    // 4. distance-matrix should have entries in lexicographical ascending
-    // order of nodes.
-    let mut distance_matrix = Vec::new();
-    for numa_node_idx in 0..numa_nodes.len() {
-        let numa_node = numa_nodes.get(&(numa_node_idx as u32));
-        for dest_numa_node in 0..numa_node.unwrap().distances.len() + 1 {
-            if numa_node_idx == dest_numa_node {
-                distance_matrix.push(numa_node_idx as u32);
-                distance_matrix.push(dest_numa_node as u32);
-                distance_matrix.push(10_u32);
-                continue;
-            }
-
-            distance_matrix.push(numa_node_idx as u32);
-            distance_matrix.push(dest_numa_node as u32);
-            distance_matrix.push(
-                *numa_node
-                    .unwrap()
-                    .distances
-                    .get(&(dest_numa_node as u32))
-                    .unwrap() as u32,
-            );
-        }
-    }
-    fdt.property_array_u32("distance-matrix", distance_matrix.as_ref())?;
-    fdt.end_node(distance_map_node)?;
-
     Ok(())
 }
 

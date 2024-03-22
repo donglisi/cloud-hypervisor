@@ -130,7 +130,6 @@ pub fn configure_system<T: DeviceInfoForFdt + Clone + Debug, S: ::std::hash::Bui
     device_info: &HashMap<(DeviceType, String), T, S>,
     initrd: &Option<super::InitramfsConfig>,
     gic_device: &Arc<Mutex<dyn Vgic>>,
-    numa_nodes: &NumaNodes,
     pmu_supported: bool,
 ) -> super::Result<()> {
     let fdt_final = fdt::create_fdt(
@@ -141,7 +140,6 @@ pub fn configure_system<T: DeviceInfoForFdt + Clone + Debug, S: ::std::hash::Bui
         device_info,
         gic_device,
         initrd,
-        numa_nodes,
         pmu_supported,
     )
     .map_err(|_| Error::SetupFdt)?;

@@ -14,6 +14,10 @@
 pub const ACPI_X2APIC_PROCESSOR: u8 = 9;
 pub const ACPI_APIC_IO: u8 = 1;
 pub const ACPI_APIC_XRUPT_OVERRIDE: u8 = 2;
+pub const ACPI_APIC_GENERIC_REDISTRIBUTOR: u8 = 14;
+pub const ACPI_APIC_GENERIC_TRANSLATOR: u8 = 15;
+pub const ACPI_APIC_GENERIC_CPU_INTERFACE: u8 = 11;
+pub const ACPI_APIC_GENERIC_DISTRIBUTOR: u8 = 12;
 use crate::config::CpusConfig;
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::coredump::{
@@ -1419,7 +1423,7 @@ impl CpuManager {
                 */
                 let mpidr_mask = 0xff_00ff_ffff;
                 let gicc = GicC {
-                    r#type: acpi::ACPI_APIC_GENERIC_CPU_INTERFACE,
+                    r#type: ACPI_APIC_GENERIC_CPU_INTERFACE,
                     length: 80,
                     reserved0: 0,
                     cpu_interface_number: cpu as u32,
@@ -1445,7 +1449,7 @@ impl CpuManager {
 
             // GIC Distributor structure. See section 5.2.12.15 in ACPI spec.
             let gicd = GicD {
-                r#type: acpi::ACPI_APIC_GENERIC_DISTRIBUTOR,
+                r#type: ACPI_APIC_GENERIC_DISTRIBUTOR,
                 length: 24,
                 reserved0: 0,
                 gic_id: 0,
@@ -1458,7 +1462,7 @@ impl CpuManager {
 
             // See 5.2.12.17 GIC Redistributor (GICR) Structure in ACPI spec.
             let gicr = GicR {
-                r#type: acpi::ACPI_APIC_GENERIC_REDISTRIBUTOR,
+                r#type: ACPI_APIC_GENERIC_REDISTRIBUTOR,
                 length: 16,
                 reserved: 0,
                 base_address: vgic_config.redists_addr,
@@ -1468,7 +1472,7 @@ impl CpuManager {
 
             // See 5.2.12.18 GIC Interrupt Translation Service (ITS) Structure in ACPI spec.
             let gicits = GicIts {
-                r#type: acpi::ACPI_APIC_GENERIC_TRANSLATOR,
+                r#type: ACPI_APIC_GENERIC_TRANSLATOR,
                 length: 20,
                 reserved0: 0,
                 translation_id: 0,
