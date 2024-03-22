@@ -606,9 +606,6 @@ pub struct DeviceManager {
     // Start time of the VM
     timestamp: Instant,
 
-    // Addresses for ACPI platform devices e.g. ACPI PM timer, sleep/reset registers
-    acpi_platform_addresses: AcpiPlatformAddresses,
-
     snapshot: Option<Snapshot>,
 }
 
@@ -756,7 +753,6 @@ impl DeviceManager {
             debug_console_pty: None,
             original_termios_opt: Arc::new(Mutex::new(None)),
             timestamp,
-            acpi_platform_addresses: AcpiPlatformAddresses::default(),
             snapshot,
         };
 
@@ -997,13 +993,6 @@ impl DeviceManager {
                 .io_bus
                 .insert(shutdown_device, shutdown_pio_address.into(), 0x4)
                 .map_err(DeviceManagerError::BusError)?;
-
-            self.acpi_platform_addresses.sleep_control_reg_address =
-                Some(GenericAddress::io_port_address::<u8>(shutdown_pio_address));
-            self.acpi_platform_addresses.sleep_status_reg_address =
-                Some(GenericAddress::io_port_address::<u8>(shutdown_pio_address));
-            self.acpi_platform_addresses.reset_reg_address =
-                Some(GenericAddress::io_port_address::<u8>(shutdown_pio_address));
         }
 
         let ged_irq = self
@@ -1065,9 +1054,6 @@ impl DeviceManager {
                 .io_bus
                 .insert(pm_timer_device, pm_timer_pio_address.into(), 0x4)
                 .map_err(DeviceManagerError::BusError)?;
-
-            self.acpi_platform_addresses.pm_timer_address =
-                Some(GenericAddress::io_port_address::<u32>(pm_timer_pio_address));
         }
 
         Ok(Some(ged_device))
@@ -1601,10 +1587,6 @@ impl DeviceManager {
 
     pub fn iommu_attached_devices(&self) -> &Option<(PciBdf, Vec<PciBdf>)> {
         &self.iommu_attached_devices
-    }
-
-    pub(crate) fn acpi_platform_addresses(&self) -> &AcpiPlatformAddresses {
-        &self.acpi_platform_addresses
     }
 }
 

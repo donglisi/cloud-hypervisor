@@ -14,7 +14,7 @@
 use crate::config::{
     ValidationError, VmConfig,
 };
-use crate::config::{NumaConfig, PayloadConfig};
+use crate::config::{PayloadConfig};
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::coredump::{
     CpuElf64Writable, DumpState, Elf64Writable, GuestDebuggable, GuestDebuggableError, NoteDescType,
@@ -46,8 +46,6 @@ use arch::layout::{KVM_IDENTITY_MAP_START, KVM_TSS_START};
 use arch::x86_64::tdx::TdvfSection;
 use arch::EntryPoint;
 #[cfg(target_arch = "aarch64")]
-use arch::{NumaNode, NumaNodes};
-#[cfg(target_arch = "aarch64")]
 use devices::interrupt_controller;
 #[cfg(all(target_arch = "aarch64", feature = "guest_debug"))]
 use gdbstub_arch::aarch64::reg::AArch64CoreRegs as CoreRegs;
@@ -65,7 +63,6 @@ use linux_loader::loader::pe::Error::InvalidImageMagicNumber;
 use linux_loader::loader::KernelLoader;
 use serde::{Deserialize, Serialize};
 use std::cmp;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fs::{File, OpenOptions};

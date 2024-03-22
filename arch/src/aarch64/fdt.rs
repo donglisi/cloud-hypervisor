@@ -6,7 +6,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
-use crate::{NumaNodes};
 use byteorder::{BigEndian, ByteOrder};
 use hypervisor::arch::aarch64::gic::Vgic;
 use std::cmp;

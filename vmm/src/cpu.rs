@@ -40,7 +40,6 @@ use arch::aarch64::regs;
 #[cfg(target_arch = "x86_64")]
 use arch::x86_64::get_x2apic_id;
 use arch::EntryPoint;
-use arch::NumaNodes;
 #[cfg(target_arch = "aarch64")]
 use devices::gic::Gic;
 use devices::interrupt_controller::InterruptController;
@@ -689,7 +688,7 @@ impl CpuManager {
         }
 
         let proximity_domain_per_cpu: BTreeMap<u8, u32> = {
-            let mut cpu_list = Vec::new();
+            let cpu_list = Vec::new();
             cpu_list
         }
         .into_iter()

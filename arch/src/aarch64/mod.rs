@@ -12,7 +12,7 @@ pub mod regs;
 pub mod uefi;
 
 pub use self::fdt::DeviceInfoForFdt;
-use crate::{DeviceType, GuestMemoryMmap, NumaNodes, RegionType};
+use crate::{DeviceType, GuestMemoryMmap, RegionType};
 use hypervisor::arch::aarch64::gic::Vgic;
 use log::{log_enabled, Level};
 use std::collections::HashMap;
