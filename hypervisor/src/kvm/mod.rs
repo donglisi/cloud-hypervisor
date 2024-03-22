@@ -367,6 +367,7 @@ impl KvmVm {
     /// Creates an emulated device in the kernel.
     ///
     /// See the documentation for `KVM_CREATE_DEVICE`.
+    #[cfg(target_arch = "aarch64")]
     fn create_device(&self, device: &mut CreateDevice) -> vm::Result<kvm_ioctls::DeviceFd> {
         let device_fd = self
             .fd
