@@ -53,7 +53,6 @@ use vmm_sys_util::eventfd::EventFd;
 use vmm_sys_util::signal::unblock_signal;
 use vmm_sys_util::sock_ctrl_msg::ScmSocket;
 
-mod acpi;
 pub mod api;
 pub mod config;
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]

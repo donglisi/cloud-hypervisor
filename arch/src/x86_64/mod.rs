@@ -894,7 +894,6 @@ pub fn configure_system(
     cmdline_addr: GuestAddress,
     initramfs: &Option<InitramfsConfig>,
     _num_cpus: u8,
-    rsdp_addr: Option<GuestAddress>,
     sgx_epc_region: Option<SgxEpcRegion>,
     serial_number: Option<&str>,
     uuid: Option<&str>,
@@ -914,18 +913,10 @@ pub fn configure_system(
     let offset = GuestAddress((offset.0 + 16) & !0xf);
     mptable::setup_mptable(offset, guest_mem, _num_cpus, topology).map_err(Error::MpTableSetup)?;
 
-    // Check that the RAM is not smaller than the RSDP start address
-    if let Some(rsdp_addr) = rsdp_addr {
-        if rsdp_addr.0 > guest_mem.last_addr().0 {
-            return Err(super::Error::RsdpPastRamEnd);
-        }
-    }
-
     configure_pvh(
         guest_mem,
         cmdline_addr,
         initramfs,
-        rsdp_addr,
         sgx_epc_region,
     )
 }
@@ -1017,7 +1008,6 @@ fn configure_pvh(
     guest_mem: &GuestMemoryMmap,
     cmdline_addr: GuestAddress,
     initramfs: &Option<InitramfsConfig>,
-    rsdp_addr: Option<GuestAddress>,
     sgx_epc_region: Option<SgxEpcRegion>,
 ) -> super::Result<()> {
     const XEN_HVM_START_MAGIC_VALUE: u32 = 0x336ec578;
@@ -1030,10 +1020,6 @@ fn configure_pvh(
         memmap_paddr: layout::MEMMAP_START.raw_value(),
         ..Default::default()
     };
-
-    if let Some(rsdp_addr) = rsdp_addr {
-        start_info.rsdp_paddr = rsdp_addr.0;
-    }
 
     if let Some(initramfs_config) = initramfs {
         // The initramfs has been written to guest memory already, here we just need to

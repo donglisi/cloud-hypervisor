@@ -11,6 +11,9 @@
 // SPDX-License-Identifier: Apache-2.0 AND BSD-3-Clause
 //
 
+pub const ACPI_X2APIC_PROCESSOR: u8 = 9;
+pub const ACPI_APIC_IO: u8 = 1;
+pub const ACPI_APIC_XRUPT_OVERRIDE: u8 = 2;
 use crate::config::CpusConfig;
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::coredump::{
@@ -637,7 +640,6 @@ impl CpuManager {
         hypervisor: &Arc<dyn hypervisor::Hypervisor>,
         vm_ops: Arc<dyn VmOps>,
         #[cfg(feature = "tdx")] tdx_enabled: bool,
-        numa_nodes: &NumaNodes,
         #[cfg(feature = "sev_snp")] sev_snp_enabled: bool,
     ) -> Result<Arc<Mutex<CpuManager>>> {
         if u32::from(config.max_vcpus) > hypervisor.get_max_vcpus() {
@@ -684,11 +686,6 @@ impl CpuManager {
 
         let proximity_domain_per_cpu: BTreeMap<u8, u32> = {
             let mut cpu_list = Vec::new();
-            for (proximity_domain, numa_node) in numa_nodes.iter() {
-                for cpu in numa_node.cpus.iter() {
-                    cpu_list.push((*cpu, *proximity_domain))
-                }
-            }
             cpu_list
         }
         .into_iter()
@@ -1357,7 +1354,6 @@ impl CpuManager {
     }
 
     pub fn create_madt(&self) -> Sdt {
-        use crate::acpi;
         // This is also checked in the commandline parsing.
         assert!(self.config.boot_vcpus <= self.config.max_vcpus);
 
@@ -1370,7 +1366,7 @@ impl CpuManager {
                 let x2apic_id = get_x2apic_id(cpu.into(), self.get_vcpu_topology());
 
                 let lapic = LocalX2Apic {
-                    r#type: acpi::ACPI_X2APIC_PROCESSOR,
+                    r#type: ACPI_X2APIC_PROCESSOR,
                     length: 16,
                     processor_id: cpu.into(),
                     apic_id: x2apic_id,
@@ -1385,7 +1381,7 @@ impl CpuManager {
             }
 
             madt.append(Ioapic {
-                r#type: acpi::ACPI_APIC_IO,
+                r#type: ACPI_APIC_IO,
                 length: 12,
                 ioapic_id: 0,
                 apic_address: arch::layout::IOAPIC_START.0 as u32,
@@ -1394,7 +1390,7 @@ impl CpuManager {
             });
 
             madt.append(InterruptSourceOverride {
-                r#type: acpi::ACPI_APIC_XRUPT_OVERRIDE,
+                r#type: ACPI_APIC_XRUPT_OVERRIDE,
                 length: 10,
                 bus: 0,
                 source: 4,
@@ -1845,7 +1841,7 @@ impl Cpu {
         let x2apic_id = arch::x86_64::get_x2apic_id(self.cpu_id.into(), self.topology);
 
         let lapic = LocalX2Apic {
-            r#type: crate::acpi::ACPI_X2APIC_PROCESSOR,
+            r#type: ACPI_X2APIC_PROCESSOR,
             length: 16,
             processor_id: self.cpu_id.into(),
             apic_id: x2apic_id,

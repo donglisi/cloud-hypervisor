@@ -450,7 +450,6 @@ pub struct Vm {
     vm: Arc<dyn hypervisor::Vm>,
     #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
     saved_clock: Option<hypervisor::ClockData>,
-    numa_nodes: NumaNodes,
     #[cfg_attr(any(not(feature = "kvm"), target_arch = "aarch64"), allow(dead_code))]
     hypervisor: Arc<dyn hypervisor::Hypervisor>,
     stop_on_boot: bool,
@@ -483,10 +482,6 @@ impl Vm {
         };
 
         info!("Booting VM from config: {:?}", &config);
-
-        // Create NUMA nodes based on NumaConfig.
-        let numa_nodes =
-            Self::create_numa_nodes(config.lock().unwrap().numa.clone())?;
 
         #[cfg(feature = "tdx")]
         let tdx_enabled = config.lock().unwrap().is_tdx_enabled();
@@ -526,7 +521,6 @@ impl Vm {
             vm_ops,
             #[cfg(feature = "tdx")]
             tdx_enabled,
-            &numa_nodes,
             #[cfg(feature = "sev_snp")]
             sev_snp_enabled,
         )
@@ -660,59 +654,10 @@ impl Vm {
             vm,
             #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
             saved_clock,
-            numa_nodes,
             hypervisor,
             stop_on_boot,
             load_payload_handle,
         })
-    }
-
-    fn create_numa_nodes(
-        configs: Option<Vec<NumaConfig>>,
-    ) -> Result<NumaNodes> {
-        let mut numa_nodes = BTreeMap::new();
-
-        if let Some(configs) = &configs {
-            for config in configs.iter() {
-                if numa_nodes.contains_key(&config.guest_numa_id) {
-                    error!("Can't define twice the same NUMA node");
-                    return Err(Error::InvalidNumaConfig);
-                }
-
-                let mut node = NumaNode::default();
-
-                if let Some(cpus) = &config.cpus {
-                    node.cpus.extend(cpus);
-                }
-
-                if let Some(pci_segments) = &config.pci_segments {
-                    node.pci_segments.extend(pci_segments);
-                }
-
-                if let Some(distances) = &config.distances {
-                    for distance in distances.iter() {
-                        let dest = distance.destination;
-                        let dist = distance.distance;
-
-                        if !configs.iter().any(|cfg| cfg.guest_numa_id == dest) {
-                            error!("Unknown destination NUMA node {}", dest);
-                            return Err(Error::InvalidNumaConfig);
-                        }
-
-                        if node.distances.contains_key(&dest) {
-                            error!("Destination NUMA node {} has been already set", dest);
-                            return Err(Error::InvalidNumaConfig);
-                        }
-
-                        node.distances.insert(dest, dist);
-                    }
-                }
-
-                numa_nodes.insert(config.guest_numa_id, node);
-            }
-        }
-
-        Ok(numa_nodes)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1069,7 +1014,7 @@ impl Vm {
     }
 
     #[cfg(target_arch = "x86_64")]
-    fn configure_system(&mut self, rsdp_addr: GuestAddress) -> Result<()> {
+    fn configure_system(&mut self) -> Result<()> {
         info!("Configuring system");
         let mem = self.memory_manager.lock().unwrap().boot_guest_memory();
 
@@ -1079,7 +1024,6 @@ impl Vm {
         };
 
         let boot_vcpus = self.cpu_manager.lock().unwrap().boot_vcpus();
-        let rsdp_addr = Some(rsdp_addr);
         let sgx_epc_region = self
             .memory_manager
             .lock()
@@ -1123,7 +1067,6 @@ impl Vm {
             arch::layout::CMDLINE_START,
             &initramfs_config,
             boot_vcpus,
-            rsdp_addr,
             sgx_epc_region,
             serial_number.as_deref(),
             uuid.as_deref(),
@@ -1135,7 +1078,7 @@ impl Vm {
     }
 
     #[cfg(target_arch = "aarch64")]
-    fn configure_system(&mut self, _rsdp_addr: GuestAddress) -> Result<()> {
+    fn configure_system(&mut self) -> Result<()> {
         let cmdline = Self::generate_cmdline(
             self.config.lock().unwrap().payload.as_ref().unwrap(),
             &self.device_manager,
@@ -1190,7 +1133,6 @@ impl Vm {
             device_info,
             &initramfs_config,
             &vgic,
-            &self.numa_nodes,
             pmu_supported,
         )
         .map_err(Error::ConfigureSystem)?;
@@ -1486,18 +1428,6 @@ impl Vm {
         )
         .map_err(Error::PopulateHob)?;
 
-        // Loop over the ACPI tables and copy them to the HOB.
-
-        for acpi_table in crate::acpi::create_acpi_tables_tdx(
-            &self.device_manager,
-            &self.cpu_manager,
-            &self.memory_manager,
-            &self.numa_nodes,
-        ) {
-            hob.add_acpi_table(&mem, acpi_table.as_slice())
-                .map_err(Error::PopulateHob)?;
-        }
-
         // If a payload info has been created, let's insert it into the HOB.
         if let Some(payload_info) = payload_info {
             hob.add_payload(&mem, payload_info)
@@ -1529,30 +1459,6 @@ impl Vm {
         Ok(())
     }
 
-    // Creates ACPI tables
-    // In case of TDX being used, this is a no-op since the tables will be
-    // created and passed when populating the HOB.
-
-    fn create_acpi_tables(&self) -> Option<GuestAddress> {
-        #[cfg(feature = "tdx")]
-        if self.config.lock().unwrap().is_tdx_enabled() {
-            return None;
-        }
-        let mem = self.memory_manager.lock().unwrap().guest_memory().memory();
-        let tpm_enabled = self.config.lock().unwrap().tpm.is_some();
-        let rsdp_addr = crate::acpi::create_acpi_tables(
-            &mem,
-            &self.device_manager,
-            &self.cpu_manager,
-            &self.memory_manager,
-            &self.numa_nodes,
-            tpm_enabled,
-        );
-        info!("Created ACPI tables: rsdp_addr = 0x{:x}", rsdp_addr.0);
-
-        Some(rsdp_addr)
-    }
-
     fn entry_point(&mut self) -> Result<Option<EntryPoint>> {
         self.load_payload_handle
             .take()
@@ -1573,24 +1479,6 @@ impl Vm {
             VmState::Running
         };
         current_state.valid_transition(new_state)?;
-
-        // Do earlier to parallelise with loading kernel
-        #[cfg(target_arch = "x86_64")]
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "sev_snp")] {
-                let sev_snp_enabled = self.config.lock().unwrap().is_sev_snp_enabled();
-                let rsdp_addr = if sev_snp_enabled {
-                    // In case of SEV-SNP guest ACPI tables are provided via
-                    // IGVM. So skip the creation of ACPI tables and set the
-                    // rsdp addr to None.
-                    None
-                } else {
-                    self.create_acpi_tables()
-                };
-            } else {
-                let rsdp_addr = self.create_acpi_tables();
-            }
-        }
 
         // Load kernel synchronously or if asynchronous then wait for load to
         // finish.
@@ -1627,17 +1515,10 @@ impl Vm {
             None
         };
 
-        // On aarch64 the ACPI tables depend on the vCPU mpidr which is only
-        // available after they are configured
-        #[cfg(target_arch = "aarch64")]
-        let rsdp_addr = self.create_acpi_tables();
-
         // Configure shared state based on loaded kernel
         entry_point
             .map(|_| {
-                // Safe to unwrap rsdp_addr as we know it can't be None when
-                // the entry_point is Some.
-                self.configure_system(rsdp_addr.unwrap())
+                self.configure_system()
             })
             .transpose()?;
 

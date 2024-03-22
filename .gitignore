@@ -7,3 +7,5 @@
 /rpm/SOURCES
 /.vscode
 /vendor
+.idea/
+.gdb_history
