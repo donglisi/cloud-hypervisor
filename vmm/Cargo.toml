@@ -6,10 +6,8 @@ edition = "2021"
 
 [features]
 default = []
-dbus_api = ["blocking", "futures", "zbus"]
 guest_debug = ["kvm", "gdbstub", "gdbstub_arch"]
 igvm = ["hex", "igvm_parser", "igvm_defs",  "mshv-bindings", "range_map_vec"]
-io_uring = ["block/io_uring"]
 kvm = ["hypervisor/kvm", "vm-device/kvm"]
 mshv = ["hypervisor/mshv", "vm-device/mshv"]
 sev_snp = ["arch/sev_snp", "hypervisor/sev_snp"]
@@ -21,8 +19,6 @@ anyhow = "1.0.79"
 arc-swap = "1.5.1"
 arch = { path = "../arch" }
 bitflags = "2.4.1"
-block = { path = "../block" }
-blocking = { version = "1.5.1", optional = true }
 cfg-if = "1.0.0"
 clap = "4.4.7"
 devices = { path = "../devices" }
