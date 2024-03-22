@@ -1927,24 +1927,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "virtio-bindings"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "878bcb1b2812a10c30d53b0ed054999de3d98f25ece91fc173973f9c57aaae86"
-
-[[package]]
-name = "virtio-queue"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3f69a13d6610db9312acbb438b0390362af905d37634a2106be70c0f734986d"
-dependencies = [
- "log",
- "virtio-bindings",
- "vm-memory",
- "vmm-sys-util",
-]
-
-[[package]]
 name = "vm-allocator"
 version = "0.1.0"
 dependencies = [
@@ -1997,15 +1979,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "vm-virtio"
-version = "0.1.0"
-dependencies = [
- "log",
- "virtio-queue",
- "vm-memory",
-]
-
-[[package]]
 name = "vmm"
 version = "0.1.0"
 dependencies = [
@@ -2043,12 +2016,10 @@ dependencies = [
  "uuid",
  "versionize",
  "versionize_derive",
- "virtio-queue",
  "vm-allocator",
  "vm-device",
  "vm-memory",
  "vm-migration",
- "vm-virtio",
  "vmm-sys-util",
  "zbus",
  "zerocopy",

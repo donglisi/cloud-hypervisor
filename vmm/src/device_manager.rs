@@ -216,9 +216,6 @@ pub enum DeviceManagerError {
     /// Failed to find the device corresponding to a specific PCI b/d/f.
     UnknownPciBdf(u32),
 
-    /// Not allowed to remove this type of device from the VM.
-    RemovalNotAllowed(vm_virtio::VirtioDeviceType),
-
     /// Failed to find device corresponding to the given identifier.
     UnknownDeviceId(String),
 
