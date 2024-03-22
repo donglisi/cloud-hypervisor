@@ -54,12 +54,12 @@ use std::path::PathBuf;
 use std::result;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use vm_allocator::{AddressAllocator, SystemAllocator};
+use vm_allocator::{SystemAllocator};
 use vm_device::interrupt::{
     InterruptIndex, InterruptManager, LegacyIrqGroupConfig, MsiIrqGroupConfig,
 };
-use vm_device::{Bus, BusDevice, Resource};
-use vm_memory::{Address, GuestAddress, GuestUsize};
+use vm_device::{Bus, BusDevice};
+use vm_memory::{Address, GuestAddress};
 #[cfg(target_arch = "x86_64")]
 use vm_memory::{GuestAddressSpace, GuestMemory};
 use vm_migration::{
@@ -347,9 +347,6 @@ pub(crate) struct AddressManager {
     pub(crate) io_bus: Arc<Bus>,
     pub(crate) mmio_bus: Arc<Bus>,
     pub(crate) vm: Arc<dyn hypervisor::Vm>,
-    device_tree: Arc<Mutex<DeviceTree>>,
-    pci_mmio32_allocators: Vec<Arc<Mutex<AddressAllocator>>>,
-    pci_mmio64_allocators: Vec<Arc<Mutex<AddressAllocator>>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -485,57 +482,12 @@ impl DeviceManager {
             (Arc::new(Mutex::new(DeviceTree::new())), Wrapping(0))
         };
 
-        let num_pci_segments =
-            if let Some(platform_config) = config.lock().unwrap().platform.as_ref() {
-                platform_config.num_pci_segments
-            } else {
-                1
-            };
-
-        let create_mmio_allocators = |start, end, num_pci_segments, alignment| {
-            // Start each PCI segment mmio range on an aligned boundary
-            let pci_segment_mmio_size =
-                (end - start + 1) / (alignment * num_pci_segments as u64) * alignment;
-
-            let mut mmio_allocators = vec![];
-            for i in 0..num_pci_segments as u64 {
-                let mmio_start = start + i * pci_segment_mmio_size;
-                let allocator = Arc::new(Mutex::new(
-                    AddressAllocator::new(GuestAddress(mmio_start), pci_segment_mmio_size).unwrap(),
-                ));
-                mmio_allocators.push(allocator)
-            }
-
-            mmio_allocators
-        };
-
-        let start_of_mmio32_area = layout::MEM_32BIT_DEVICES_START.0;
-        let end_of_mmio32_area = layout::MEM_32BIT_DEVICES_START.0 + layout::MEM_32BIT_DEVICES_SIZE;
-        let pci_mmio32_allocators = create_mmio_allocators(
-            start_of_mmio32_area,
-            end_of_mmio32_area,
-            num_pci_segments,
-            4 << 10,
-        );
-
-        let start_of_mmio64_area = memory_manager.lock().unwrap().start_of_device_area().0;
-        let end_of_mmio64_area = memory_manager.lock().unwrap().end_of_device_area().0;
-        let pci_mmio64_allocators = create_mmio_allocators(
-            start_of_mmio64_area,
-            end_of_mmio64_area,
-            num_pci_segments,
-            4 << 30,
-        );
-
         let address_manager = Arc::new(AddressManager {
             allocator: memory_manager.lock().unwrap().allocator(),
             #[cfg(target_arch = "x86_64")]
             io_bus,
             mmio_bus,
             vm: vm.clone(),
-            device_tree: Arc::clone(&device_tree),
-            pci_mmio32_allocators,
-            pci_mmio64_allocators,
         });
 
         // First we create the MSI interrupt manager, the legacy one is created
@@ -1721,7 +1673,6 @@ impl BusDevice for DeviceManager {
                 assert!(data.len() == B0EJ_FIELD_SIZE);
                 let mut data_array: [u8; 4] = [0, 0, 0, 0];
                 data_array.copy_from_slice(data);
-                let mut slot_bitmap = u32::from_le_bytes(data_array);
             }
             _ => error!(
                 "Accessing unknown location at base 0x{:x}, offset 0x{:x}",

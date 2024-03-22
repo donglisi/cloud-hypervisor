@@ -26,7 +26,6 @@ use anyhow::anyhow;
 use api::dbus::{DBusApiOptions, DBusApiShutdownChannels};
 use libc::{tcsetattr, termios, EFD_NONBLOCK, SIGINT, SIGTERM, TCSANOW};
 use memory_manager::MemoryManagerSnapshotData;
-use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 use signal_hook::iterator::{Handle, Signals};
 use std::collections::HashMap;
