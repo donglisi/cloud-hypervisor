@@ -78,7 +78,6 @@ members = [
     "block",
     "devices",
     "hypervisor",
-    "net_gen",
     "option_parser",
     "pci",
     "serial_buffer",
