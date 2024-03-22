@@ -235,13 +235,6 @@ fn create_app(default_vcpus: String, default_memory: String, default_rng: String
                 .group("vm-config"),
         )
         .arg(
-            Arg::new("net")
-                .long("net")
-                .help(config::NetConfig::SYNTAX)
-                .num_args(1..)
-                .group("vm-config"),
-        )
-        .arg(
             Arg::new("rng")
                 .long("rng")
                 .help(

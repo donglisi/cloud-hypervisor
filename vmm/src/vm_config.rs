@@ -2,9 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-use net_util::MacAddr;
 use serde::{Deserialize, Serialize};
-use std::{net::Ipv4Addr, path::PathBuf};
+use std::{path::PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct CpuAffinity {
@@ -230,24 +229,8 @@ pub fn default_diskconfig_queue_size() -> u16 {
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct NetConfig {
-    #[serde(default = "default_netconfig_tap")]
-    pub tap: Option<String>,
-    #[serde(default = "default_netconfig_ip")]
-    pub ip: Ipv4Addr,
-    #[serde(default = "default_netconfig_mask")]
-    pub mask: Ipv4Addr,
-    #[serde(default = "default_netconfig_mac")]
-    pub mac: MacAddr,
-    #[serde(default)]
-    pub host_mac: Option<MacAddr>,
-    #[serde(default)]
-    pub mtu: Option<u16>,
     #[serde(default)]
     pub iommu: bool,
-    #[serde(default = "default_netconfig_num_queues")]
-    pub num_queues: usize,
-    #[serde(default = "default_netconfig_queue_size")]
-    pub queue_size: u16,
     #[serde(default)]
     pub vhost_user: bool,
     pub vhost_socket: Option<String>,
@@ -259,45 +242,11 @@ pub struct NetConfig {
     pub fds: Option<Vec<i32>>,
     #[serde(default)]
     pub pci_segment: u16,
-    #[serde(default = "default_netconfig_true")]
-    pub offload_tso: bool,
-    #[serde(default = "default_netconfig_true")]
-    pub offload_ufo: bool,
-    #[serde(default = "default_netconfig_true")]
-    pub offload_csum: bool,
-}
-
-pub fn default_netconfig_true() -> bool {
-    true
-}
-
-pub fn default_netconfig_tap() -> Option<String> {
-    None
-}
-
-pub fn default_netconfig_ip() -> Ipv4Addr {
-    Ipv4Addr::new(192, 168, 249, 1)
-}
-
-pub fn default_netconfig_mask() -> Ipv4Addr {
-    Ipv4Addr::new(255, 255, 255, 0)
-}
-
-pub fn default_netconfig_mac() -> MacAddr {
-    MacAddr::local_random()
 }
 
 pub const DEFAULT_NET_NUM_QUEUES: usize = 2;
 
-pub fn default_netconfig_num_queues() -> usize {
-    DEFAULT_NET_NUM_QUEUES
-}
-
 pub const DEFAULT_NET_QUEUE_SIZE: u16 = 256;
-
-pub fn default_netconfig_queue_size() -> u16 {
-    DEFAULT_NET_QUEUE_SIZE
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct RngConfig {
@@ -540,7 +489,6 @@ pub struct VmConfig {
     pub memory: MemoryConfig,
     pub payload: Option<PayloadConfig>,
     pub disks: Option<Vec<DiskConfig>>,
-    pub net: Option<Vec<NetConfig>>,
     #[serde(default)]
     pub rng: RngConfig,
     pub balloon: Option<BalloonConfig>,

@@ -110,9 +110,6 @@ pub enum DeviceManagerError {
     /// Cannot spawn the serial manager thread
     SpawnSerialManager(SerialManagerError),
 
-    /// Cannot open tap interface
-    OpenTap(net_util::TapError),
-
     /// Cannot allocate IRQ.
     AllocateIrq,
 

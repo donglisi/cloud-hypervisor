@@ -410,7 +410,6 @@ pub struct VmParams<'a> {
     pub initramfs: Option<&'a str>,
     pub cmdline: Option<&'a str>,
     pub disks: Option<Vec<&'a str>>,
-    pub net: Option<Vec<&'a str>>,
     pub rng: &'a str,
     pub balloon: Option<&'a str>,
     pub fs: Option<Vec<&'a str>>,
@@ -452,9 +451,6 @@ impl<'a> VmParams<'a> {
         let cmdline = args.get_one::<String>("cmdline").map(|x| x as &str);
         let disks: Option<Vec<&str>> = args
             .get_many::<String>("disk")
-            .map(|x| x.map(|y| y as &str).collect());
-        let net: Option<Vec<&str>> = args
-            .get_many::<String>("net")
             .map(|x| x.map(|y| y as &str).collect());
         let console = args.get_one::<String>("console").unwrap();
         #[cfg(target_arch = "x86_64")]
@@ -500,7 +496,6 @@ impl<'a> VmParams<'a> {
             initramfs,
             cmdline,
             disks,
-            net,
             rng,
             balloon,
             fs,
@@ -1050,176 +1045,6 @@ impl FromStr for VhostMode {
             "server" => Ok(VhostMode::Server),
             _ => Err(ParseVhostModeError::InvalidValue(s.to_owned())),
         }
-    }
-}
-
-impl NetConfig {
-    pub const SYNTAX: &'static str = "Network parameters \
-    \"tap=<if_name>,ip=<ip_addr>,mask=<net_mask>,mac=<mac_addr>,fd=<fd1,fd2...>,iommu=on|off,\
-    num_queues=<number_of_queues>,queue_size=<size_of_each_queue>,id=<device_id>,\
-    vhost_user=<vhost_user_enable>,socket=<vhost_user_socket_path>,vhost_mode=client|server,\
-    bw_size=<bytes>,bw_one_time_burst=<bytes>,bw_refill_time=<ms>,\
-    ops_size=<io_ops>,ops_one_time_burst=<io_ops>,ops_refill_time=<ms>,pci_segment=<segment_id>\
-    offload_tso=on|off,offload_ufo=on|off,offload_csum=on|off\"";
-
-    pub fn parse(net: &str) -> Result<Self> {
-        let mut parser = OptionParser::new();
-
-        parser
-            .add("tap")
-            .add("ip")
-            .add("mask")
-            .add("mac")
-            .add("host_mac")
-            .add("offload_tso")
-            .add("offload_ufo")
-            .add("offload_csum")
-            .add("mtu")
-            .add("iommu")
-            .add("queue_size")
-            .add("num_queues")
-            .add("vhost_user")
-            .add("socket")
-            .add("vhost_mode")
-            .add("id")
-            .add("fd")
-            .add("bw_size")
-            .add("bw_one_time_burst")
-            .add("bw_refill_time")
-            .add("ops_size")
-            .add("ops_one_time_burst")
-            .add("ops_refill_time")
-            .add("pci_segment");
-        parser.parse(net).map_err(Error::ParseNetwork)?;
-
-        let tap = parser.get("tap");
-        let ip = parser
-            .convert("ip")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or_else(default_netconfig_ip);
-        let mask = parser
-            .convert("mask")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or_else(default_netconfig_mask);
-        let mac = parser
-            .convert("mac")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or_else(default_netconfig_mac);
-        let host_mac = parser.convert("host_mac").map_err(Error::ParseNetwork)?;
-        let offload_tso = parser
-            .convert::<Toggle>("offload_tso")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or(Toggle(true))
-            .0;
-        let offload_ufo = parser
-            .convert::<Toggle>("offload_ufo")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or(Toggle(true))
-            .0;
-        let offload_csum = parser
-            .convert::<Toggle>("offload_csum")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or(Toggle(true))
-            .0;
-        let mtu = parser.convert("mtu").map_err(Error::ParseNetwork)?;
-        let iommu = parser
-            .convert::<Toggle>("iommu")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or(Toggle(false))
-            .0;
-        let queue_size = parser
-            .convert("queue_size")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or_else(default_netconfig_queue_size);
-        let num_queues = parser
-            .convert("num_queues")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or_else(default_netconfig_num_queues);
-        let vhost_user = parser
-            .convert::<Toggle>("vhost_user")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or(Toggle(false))
-            .0;
-        let vhost_socket = parser.get("socket");
-        let vhost_mode = parser
-            .convert("vhost_mode")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or_default();
-        let id = parser.get("id");
-        let fds = parser
-            .convert::<IntegerList>("fd")
-            .map_err(Error::ParseNetwork)?
-            .map(|v| v.0.iter().map(|e| *e as i32).collect());
-        let pci_segment = parser
-            .convert("pci_segment")
-            .map_err(Error::ParseNetwork)?
-            .unwrap_or_default();
-
-        let config = NetConfig {
-            tap,
-            ip,
-            mask,
-            mac,
-            host_mac,
-            mtu,
-            iommu,
-            num_queues,
-            queue_size,
-            vhost_user,
-            vhost_socket,
-            vhost_mode,
-            id,
-            fds,
-            pci_segment,
-            offload_tso,
-            offload_ufo,
-            offload_csum,
-        };
-        Ok(config)
-    }
-
-    pub fn validate(&self, vm_config: &VmConfig) -> ValidationResult<()> {
-        if self.num_queues < 2 {
-            return Err(ValidationError::VnetQueueLowerThan2);
-        }
-
-        if self.fds.is_some() && self.fds.as_ref().unwrap().len() * 2 != self.num_queues {
-            return Err(ValidationError::VnetQueueFdMismatch);
-        }
-
-        if let Some(fds) = self.fds.as_ref() {
-            for fd in fds {
-                if *fd <= 2 {
-                    return Err(ValidationError::VnetReservedFd);
-                }
-            }
-        }
-
-        if (self.num_queues / 2) > vm_config.cpus.boot_vcpus as usize {
-            return Err(ValidationError::TooManyQueues);
-        }
-
-        if self.vhost_user && self.iommu {
-            return Err(ValidationError::IommuNotSupported);
-        }
-
-        if let Some(platform_config) = vm_config.platform.as_ref() {
-            if self.pci_segment >= platform_config.num_pci_segments {
-                return Err(ValidationError::InvalidPciSegment(self.pci_segment));
-            }
-
-            if let Some(iommu_segments) = platform_config.iommu_segments.as_ref() {
-                if iommu_segments.contains(&self.pci_segment) && !self.iommu {
-                    return Err(ValidationError::OnIommuSegment(self.pci_segment));
-                }
-            }
-        }
-
-        if !self.offload_csum && (self.offload_tso || self.offload_ufo) {
-            return Err(ValidationError::NoHardwareChecksumOffload);
-        }
-
-        Ok(())
     }
 }
 
@@ -1985,18 +1810,6 @@ impl VmConfig {
             }
         }
 
-        if let Some(nets) = &self.net {
-            for net in nets {
-                if net.vhost_user && !self.backed_by_shared_memory() {
-                    return Err(ValidationError::VhostUserRequiresSharedMemory);
-                }
-                net.validate(self)?;
-                self.iommu |= net.iommu;
-
-                Self::validate_identifier(&mut id_list, &net.id)?;
-            }
-        }
-
         if let Some(fses) = &self.fs {
             if !fses.is_empty() && !self.backed_by_shared_memory() {
                 return Err(ValidationError::VhostUserRequiresSharedMemory);
@@ -2202,16 +2015,6 @@ impl VmConfig {
             disks = Some(disk_config_list);
         }
 
-        let mut net: Option<Vec<NetConfig>> = None;
-        if let Some(net_list) = &vm_params.net {
-            let mut net_config_list = Vec::new();
-            for item in net_list.iter() {
-                let net_config = NetConfig::parse(item)?;
-                net_config_list.push(net_config);
-            }
-            net = Some(net_config_list);
-        }
-
         let rng = RngConfig::parse(vm_params.rng)?;
 
         let mut balloon: Option<BalloonConfig> = None;
@@ -2341,7 +2144,6 @@ impl VmConfig {
             memory: MemoryConfig::parse(vm_params.memory, vm_params.memory_zones)?,
             payload,
             disks,
-            net,
             rng,
             balloon,
             fs,
@@ -2399,13 +2201,6 @@ impl VmConfig {
             let len = fs.len();
             fs.retain(|dev| dev.id.as_ref().map(|id| id.as_ref()) != Some(id));
             removed |= fs.len() != len;
-        }
-
-        // Remove if net device
-        if let Some(net) = self.net.as_mut() {
-            let len = net.len();
-            net.retain(|dev| dev.id.as_ref().map(|id| id.as_ref()) != Some(id));
-            removed |= net.len() != len;
         }
 
         // Remove if pmem device
@@ -2466,7 +2261,6 @@ impl Clone for VmConfig {
             memory: self.memory.clone(),
             payload: self.payload.clone(),
             disks: self.disks.clone(),
-            net: self.net.clone(),
             rng: self.rng.clone(),
             balloon: self.balloon.clone(),
             fs: self.fs.clone(),
