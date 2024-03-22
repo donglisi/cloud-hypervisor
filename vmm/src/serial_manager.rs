@@ -396,7 +396,7 @@ impl SerialManager {
                                             if term_got_escape {
                                                 term_got_escape = false;
                                                 if input[0] == 0x78 {
-                                                    unsafe {libc::kill(std::process::id() as i32, libc::SIGTERM);}
+                                                    unsafe {libc::kill(std::process::id() as i32, libc::SIGKILL);}
                                                 }
                                                 if input[0] == 0x1 {
                                                     serial

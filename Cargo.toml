@@ -84,10 +84,8 @@ members = [
     "option_parser",
     "pci",
     "serial_buffer",
-    "virtio-devices",
     "vmm",
     "vm-allocator",
     "vm-device",
     "vm-migration",
-    "vm-virtio"
 ]

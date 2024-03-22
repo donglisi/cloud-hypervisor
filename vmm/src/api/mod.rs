@@ -301,10 +301,6 @@ pub trait RequestHandler {
 
     fn vm_remove_device(&mut self, id: String) -> Result<(), VmError>;
 
-    fn vm_add_disk(&mut self, disk_cfg: DiskConfig) -> Result<Option<Vec<u8>>, VmError>;
-
-    fn vm_add_net(&mut self, net_cfg: NetConfig) -> Result<Option<Vec<u8>>, VmError>;
-
     fn vm_counters(&mut self) -> Result<Option<Vec<u8>>, VmError>;
 
     fn vm_power_button(&mut self) -> Result<(), VmError>;
@@ -379,82 +375,6 @@ pub trait ApiAction: Send + Sync {
         api_sender: Sender<ApiRequest>,
         data: Self::RequestBody,
     ) -> ApiResult<Self::ResponseBody>;
-}
-
-pub struct VmAddDevice;
-
-pub struct AddDisk;
-
-impl ApiAction for AddDisk {
-    type RequestBody = DiskConfig;
-    type ResponseBody = Option<Body>;
-
-    fn request(
-        &self,
-        config: Self::RequestBody,
-        response_sender: Sender<ApiResponse>,
-    ) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: AddDisk {:?}", config);
-
-            let response = vmm
-                .vm_add_disk(config)
-                .map_err(ApiError::VmAddDisk)
-                .map(ApiResponsePayload::VmAction);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
-
-pub struct VmAddNet;
-
-impl ApiAction for VmAddNet {
-    type RequestBody = NetConfig;
-    type ResponseBody = Option<Body>;
-
-    fn request(
-        &self,
-        config: Self::RequestBody,
-        response_sender: Sender<ApiResponse>,
-    ) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmAddNet {:?}", config);
-
-            let response = vmm
-                .vm_add_net(config)
-                .map_err(ApiError::VmAddNet)
-                .map(ApiResponsePayload::VmAction);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
 }
 
 pub struct VmBoot;

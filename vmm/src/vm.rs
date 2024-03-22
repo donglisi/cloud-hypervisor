@@ -1310,54 +1310,6 @@ impl Vm {
         Ok(())
     }
 
-    pub fn add_disk(&mut self, mut disk_cfg: DiskConfig) -> Result<PciDeviceInfo> {
-        let pci_device_info = self
-            .device_manager
-            .lock()
-            .unwrap()
-            .add_disk(&mut disk_cfg)
-            .map_err(Error::DeviceManager)?;
-
-        // Update VmConfig by adding the new device. This is important to
-        // ensure the device would be created in case of a reboot.
-        {
-            let mut config = self.config.lock().unwrap();
-            add_to_config(&mut config.disks, disk_cfg);
-        }
-
-        self.device_manager
-            .lock()
-            .unwrap()
-            .notify_hotplug(AcpiNotificationFlags::PCI_DEVICES_CHANGED)
-            .map_err(Error::DeviceManager)?;
-
-        Ok(pci_device_info)
-    }
-
-    pub fn add_net(&mut self, mut net_cfg: NetConfig) -> Result<PciDeviceInfo> {
-        let pci_device_info = self
-            .device_manager
-            .lock()
-            .unwrap()
-            .add_net(&mut net_cfg)
-            .map_err(Error::DeviceManager)?;
-
-        // Update VmConfig by adding the new device. This is important to
-        // ensure the device would be created in case of a reboot.
-        {
-            let mut config = self.config.lock().unwrap();
-            add_to_config(&mut config.net, net_cfg);
-        }
-
-        self.device_manager
-            .lock()
-            .unwrap()
-            .notify_hotplug(AcpiNotificationFlags::PCI_DEVICES_CHANGED)
-            .map_err(Error::DeviceManager)?;
-
-        Ok(pci_device_info)
-    }
-
     pub fn counters(&self) -> Result<HashMap<String, HashMap<&'static str, Wrapping<u64>>>> {
         Ok(self.device_manager.lock().unwrap().counters())
     }
@@ -1931,14 +1883,6 @@ impl Vm {
         self.device_manager.lock().unwrap().device_tree()
     }
 
-    pub fn activate_virtio_devices(&self) -> Result<()> {
-        self.device_manager
-            .lock()
-            .unwrap()
-            .activate_virtio_devices()
-            .map_err(Error::ActivateVirtioDevices)
-    }
-
     #[cfg(target_arch = "x86_64")]
     pub fn power_button(&self) -> Result<()> {
         return self
@@ -2081,12 +2025,6 @@ impl Pausable for Vm {
             clock.reset_flags();
             self.saved_clock = Some(clock);
         }
-
-        // Before pausing the vCPUs activate any pending virtio devices that might
-        // need activation between starting the pause (or e.g. a migration it's part of)
-        self.activate_virtio_devices().map_err(|e| {
-            MigratableError::Pause(anyhow!("Error activating pending virtio devices: {:?}", e))
-        })?;
 
         self.cpu_manager.lock().unwrap().pause()?;
         self.device_manager.lock().unwrap().pause()?;

@@ -1215,12 +1215,6 @@ impl NetConfig {
             }
         }
 
-        if let Some(mtu) = self.mtu {
-            if mtu < virtio_devices::net::MIN_MTU {
-                return Err(ValidationError::InvalidMtu(mtu));
-            }
-        }
-
         if !self.offload_csum && (self.offload_tso || self.offload_ufo) {
             return Err(ValidationError::NoHardwareChecksumOffload);
         }

@@ -153,10 +153,6 @@ pub enum Error {
     #[error("Error applying seccomp filter: {0}")]
     ApplySeccompFilter(seccompiler::Error),
 
-    /// Error activating virtio devices
-    #[error("Error activating virtio devices: {0:?}")]
-    ActivateVirtioDevices(VmError),
-
     /// Error creating API server
     #[error("Error creating API server {0:?}")]
     CreateApiServer(micro_http::ServerError),
@@ -193,7 +189,6 @@ pub enum EpollDispatch {
     Exit = 0,
     Reset = 1,
     Api = 2,
-    ActivateVirtioDevices = 3,
     Debug = 4,
     Unknown,
 }
@@ -205,7 +200,6 @@ impl From<u64> for EpollDispatch {
             0 => Exit,
             1 => Reset,
             2 => Api,
-            3 => ActivateVirtioDevices,
             4 => Debug,
             _ => Unknown,
         }
@@ -537,10 +531,6 @@ impl Vmm {
 
         epoll
             .add_event(&reset_evt, EpollDispatch::Reset)
-            .map_err(Error::Epoll)?;
-
-        epoll
-            .add_event(&activate_evt, EpollDispatch::ActivateVirtioDevices)
             .map_err(Error::Epoll)?;
 
         epoll
@@ -1026,17 +1016,6 @@ impl Vmm {
                         self.reset_evt.read().map_err(Error::EventFdRead)?;
                         self.vm_reboot().map_err(Error::VmReboot)?;
                     }
-                    EpollDispatch::ActivateVirtioDevices => {
-                        if let Some(ref vm) = self.vm {
-                            let count = self.activate_evt.read().map_err(Error::EventFdRead)?;
-                            info!(
-                                "Trying to activate pending virtio devices: count = {}",
-                                count
-                            );
-                            vm.activate_virtio_devices()
-                                .map_err(Error::ActivateVirtioDevices)?;
-                        }
-                    }
                     EpollDispatch::Api => {
                         // Consume the events.
                         for _ in 0..self.api_evt.read().map_err(Error::EventFdRead)? {
@@ -1410,58 +1389,6 @@ impl RequestHandler for Vmm {
             }
         } else {
             Err(VmError::VmNotCreated)
-        }
-    }
-
-    fn vm_add_disk(&mut self, disk_cfg: DiskConfig) -> result::Result<Option<Vec<u8>>, VmError> {
-        self.vm_config.as_ref().ok_or(VmError::VmNotCreated)?;
-
-        {
-            // Validate the configuration change in a cloned configuration
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap().clone();
-            add_to_config(&mut config.disks, disk_cfg.clone());
-            config.validate().map_err(VmError::ConfigValidation)?;
-        }
-
-        if let Some(ref mut vm) = self.vm {
-            let info = vm.add_disk(disk_cfg).map_err(|e| {
-                error!("Error when adding new disk to the VM: {:?}", e);
-                e
-            })?;
-            serde_json::to_vec(&info)
-                .map(Some)
-                .map_err(VmError::SerializeJson)
-        } else {
-            // Update VmConfig by adding the new device.
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap();
-            add_to_config(&mut config.disks, disk_cfg);
-            Ok(None)
-        }
-    }
-
-    fn vm_add_net(&mut self, net_cfg: NetConfig) -> result::Result<Option<Vec<u8>>, VmError> {
-        self.vm_config.as_ref().ok_or(VmError::VmNotCreated)?;
-
-        {
-            // Validate the configuration change in a cloned configuration
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap().clone();
-            add_to_config(&mut config.net, net_cfg.clone());
-            config.validate().map_err(VmError::ConfigValidation)?;
-        }
-
-        if let Some(ref mut vm) = self.vm {
-            let info = vm.add_net(net_cfg).map_err(|e| {
-                error!("Error when adding new network device to the VM: {:?}", e);
-                e
-            })?;
-            serde_json::to_vec(&info)
-                .map(Some)
-                .map_err(VmError::SerializeJson)
-        } else {
-            // Update VmConfig by adding the new device.
-            let mut config = self.vm_config.as_ref().unwrap().lock().unwrap();
-            add_to_config(&mut config.net, net_cfg);
-            Ok(None)
         }
     }
 

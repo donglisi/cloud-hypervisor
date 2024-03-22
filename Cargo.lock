@@ -2159,37 +2159,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "878bcb1b2812a10c30d53b0ed054999de3d98f25ece91fc173973f9c57aaae86"
 
 [[package]]
-name = "virtio-devices"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arc-swap",
- "block",
- "byteorder",
- "epoll",
- "libc",
- "log",
- "net_gen",
- "net_util",
- "pci",
- "seccompiler",
- "serde",
- "serde_json",
- "serial_buffer",
- "thiserror",
- "versionize",
- "versionize_derive",
- "virtio-bindings",
- "virtio-queue",
- "vm-allocator",
- "vm-device",
- "vm-memory",
- "vm-migration",
- "vm-virtio",
- "vmm-sys-util",
-]
-
-[[package]]
 name = "virtio-queue"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2304,7 +2273,6 @@ dependencies = [
  "uuid",
  "versionize",
  "versionize_derive",
- "virtio-devices",
  "virtio-queue",
  "vm-allocator",
  "vm-device",
