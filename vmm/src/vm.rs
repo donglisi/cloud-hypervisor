@@ -12,7 +12,6 @@
 //
 
 use crate::config::{
-    add_to_config, DiskConfig, NetConfig,
     ValidationError, VmConfig,
 };
 use crate::config::{NumaConfig, PayloadConfig};
@@ -37,7 +36,7 @@ use crate::migration::url_to_file;
 use crate::migration::{url_to_path, SNAPSHOT_CONFIG_FILE, SNAPSHOT_STATE_FILE};
 use crate::GuestMemoryMmap;
 use crate::{
-    PciDeviceInfo, CPU_MANAGER_SNAPSHOT_ID, DEVICE_MANAGER_SNAPSHOT_ID, MEMORY_MANAGER_SNAPSHOT_ID,
+    CPU_MANAGER_SNAPSHOT_ID, DEVICE_MANAGER_SNAPSHOT_ID, MEMORY_MANAGER_SNAPSHOT_ID,
 };
 use anyhow::anyhow;
 use arch::get_host_cpu_phys_bits;
@@ -47,11 +46,9 @@ use arch::layout::{KVM_IDENTITY_MAP_START, KVM_TSS_START};
 use arch::x86_64::tdx::TdvfSection;
 use arch::EntryPoint;
 #[cfg(target_arch = "aarch64")]
-use arch::PciSpaceInfo;
 use arch::{NumaNode, NumaNodes};
 #[cfg(target_arch = "aarch64")]
 use devices::interrupt_controller;
-use devices::AcpiNotificationFlags;
 #[cfg(all(target_arch = "aarch64", feature = "guest_debug"))]
 use gdbstub_arch::aarch64::reg::AArch64CoreRegs as CoreRegs;
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
@@ -472,21 +469,12 @@ impl Vm {
         reset_evt: EventFd,
         #[cfg(feature = "guest_debug")] vm_debug_evt: EventFd,
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
-        activate_evt: EventFd,
         timestamp: Instant,
         serial_pty: Option<PtyPair>,
-        console_pty: Option<PtyPair>,
         debug_console_pty: Option<PtyPair>,
-        console_resize_pipe: Option<File>,
         original_termios: Arc<Mutex<Option<termios>>>,
         snapshot: Option<Snapshot>,
     ) -> Result<Self> {
-        let boot_id_list = config
-            .lock()
-            .unwrap()
-            .validate()
-            .map_err(Error::ConfigValidation)?;
-
         #[cfg(not(feature = "igvm"))]
         let load_payload_handle = if snapshot.is_none() {
             Self::load_payload_async(&memory_manager, &config)?
@@ -508,8 +496,6 @@ impl Vm {
         let force_iommu = tdx_enabled;
         #[cfg(feature = "sev_snp")]
         let force_iommu = sev_snp_enabled;
-        #[cfg(not(any(feature = "tdx", feature = "sev_snp")))]
-        let force_iommu = false;
 
         #[cfg(feature = "guest_debug")]
         let stop_on_boot = config.lock().unwrap().gdb;
@@ -610,7 +596,6 @@ impl Vm {
             cpu_manager.clone(),
             exit_evt.try_clone().map_err(Error::EventFdClone)?,
             reset_evt,
-            numa_nodes.clone(),
             timestamp,
             snapshot_from_id(snapshot.as_ref(), DEVICE_MANAGER_SNAPSHOT_ID),
             dynamic,
@@ -622,9 +607,7 @@ impl Vm {
             .unwrap()
             .create_devices(
                 serial_pty,
-                console_pty,
                 debug_console_pty,
-                console_resize_pipe,
                 original_termios,
             )
             .map_err(Error::DeviceManager)?;
@@ -739,11 +722,8 @@ impl Vm {
         reset_evt: EventFd,
         #[cfg(feature = "guest_debug")] vm_debug_evt: EventFd,
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
-        activate_evt: EventFd,
         serial_pty: Option<PtyPair>,
-        console_pty: Option<PtyPair>,
         debug_console_pty: Option<PtyPair>,
-        console_resize_pipe: Option<File>,
         original_termios: Arc<Mutex<Option<termios>>>,
         snapshot: Option<Snapshot>,
         source_url: Option<&str>,
@@ -815,12 +795,9 @@ impl Vm {
             #[cfg(feature = "guest_debug")]
             vm_debug_evt,
             hypervisor,
-            activate_evt,
             timestamp,
             serial_pty,
-            console_pty,
             debug_console_pty,
-            console_resize_pipe,
             original_termios,
             snapshot,
         )
@@ -1166,7 +1143,6 @@ impl Vm {
         let vcpu_mpidrs = self.cpu_manager.lock().unwrap().get_mpidrs();
         let vcpu_topology = self.cpu_manager.lock().unwrap().get_vcpu_topology();
         let mem = self.memory_manager.lock().unwrap().boot_guest_memory();
-        let mut pci_space_info: Vec<PciSpaceInfo> = Vec::new();
         let initramfs_config = match self.initramfs {
             Some(_) => Some(self.load_initramfs(&mem)?),
             None => None,
@@ -1178,14 +1154,6 @@ impl Vm {
             .unwrap()
             .get_device_info()
             .clone();
-
-        let virtio_iommu_bdf = self
-            .device_manager
-            .lock()
-            .unwrap()
-            .iommu_attached_devices()
-            .as_ref()
-            .map(|(v, _)| *v);
 
         let vgic = self
             .device_manager
@@ -1221,8 +1189,6 @@ impl Vm {
             vcpu_topology,
             device_info,
             &initramfs_config,
-            &pci_space_info,
-            virtio_iommu_bdf.map(|bdf| bdf.into()),
             &vgic,
             &self.numa_nodes,
             pmu_supported,
@@ -1236,16 +1202,8 @@ impl Vm {
         self.device_manager.lock().unwrap().serial_pty()
     }
 
-    pub fn console_pty(&self) -> Option<PtyPair> {
-        self.device_manager.lock().unwrap().console_pty()
-    }
-
     pub fn debug_console_pty(&self) -> Option<PtyPair> {
         self.device_manager.lock().unwrap().debug_console_pty()
-    }
-
-    pub fn console_resize_pipe(&self) -> Option<Arc<File>> {
-        self.device_manager.lock().unwrap().console_resize_pipe()
     }
 
     pub fn shutdown(&mut self) -> Result<()> {
@@ -1273,25 +1231,6 @@ impl Vm {
         }
         *state = new_state;
 
-        Ok(())
-    }
-
-    pub fn remove_device(&mut self, id: String) -> Result<()> {
-        self.device_manager
-            .lock()
-            .unwrap()
-            .remove_device(id.clone())
-            .map_err(Error::DeviceManager)?;
-
-        // Update VmConfig by removing the device. This is important to
-        // ensure the device would not be created in case of a reboot.
-        self.config.lock().unwrap().remove_device(&id);
-
-        self.device_manager
-            .lock()
-            .unwrap()
-            .notify_hotplug(AcpiNotificationFlags::PCI_DEVICES_CHANGED)
-            .map_err(Error::DeviceManager)?;
         Ok(())
     }
 

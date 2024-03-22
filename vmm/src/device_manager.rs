@@ -10,7 +10,7 @@
 //
 
 use crate::config::{
-    ConsoleOutputMode, DiskConfig, NetConfig,
+    ConsoleOutputMode,
     VmConfig,
 };
 use crate::cpu::{CpuManager, CPU_MANAGER_ACPI_SIZE};
@@ -19,24 +19,14 @@ use crate::interrupt::LegacyUserspaceInterruptManager;
 use crate::interrupt::MsiInterruptManager;
 use crate::memory_manager::{Error as MemoryManagerError, MemoryManager, MEMORY_MANAGER_ACPI_SIZE};
 use crate::serial_manager::{Error as SerialManagerError, SerialManager};
-use crate::GuestRegionMmap;
-use crate::PciDeviceInfo;
 use crate::{device_node, DEVICE_MANAGER_SNAPSHOT_ID};
 use acpi_tables::sdt::GenericAddress;
 use acpi_tables::{aml, Aml};
 use arch::layout;
 #[cfg(target_arch = "x86_64")]
 use arch::layout::{APIC_START, IOAPIC_SIZE, IOAPIC_START};
-use arch::NumaNodes;
 #[cfg(target_arch = "aarch64")]
 use arch::{DeviceType, MmioDeviceInfo};
-use block::{
-    async_io::DiskFile, block_aio_is_supported, block_io_uring_is_supported, detect_image_type,
-    qcow, qcow_sync::QcowDiskSync, raw_async_aio::RawFileDiskAio,
-    raw_sync::RawFileDiskSync, ImageType,
-};
-#[cfg(feature = "io_uring")]
-use block::{raw_async::RawFileDisk};
 #[cfg(target_arch = "x86_64")]
 use devices::debug_console::DebugConsole;
 #[cfg(target_arch = "aarch64")]
@@ -48,7 +38,6 @@ use devices::legacy::Pl011;
 use devices::{
     interrupt_controller, interrupt_controller::InterruptController, AcpiNotificationFlags,
 };
-use hypervisor::{IoEventAddress};
 use libc::{
     cfmakeraw, isatty, tcgetattr, tcsetattr, termios,
     TCSANOW,
@@ -57,7 +46,7 @@ use pci::{
     DeviceRelocation, PciBarRegionType, PciBdf, PciDevice,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{HashMap};
 use std::fs::{read_link, File, OpenOptions};
 use std::io::{self, stdout};
 use std::mem::zeroed;
@@ -69,12 +58,10 @@ use std::result;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use vm_allocator::{AddressAllocator, SystemAllocator};
-use vm_device::dma_mapping::ExternalDmaMapping;
 use vm_device::interrupt::{
     InterruptIndex, InterruptManager, LegacyIrqGroupConfig, MsiIrqGroupConfig,
 };
 use vm_device::{Bus, BusDevice, Resource};
-use vm_memory::GuestMemoryRegion;
 use vm_memory::{Address, GuestAddress, GuestUsize};
 #[cfg(target_arch = "x86_64")]
 use vm_memory::{GuestAddressSpace, GuestMemory};
@@ -82,8 +69,6 @@ use vm_migration::{
     protocol::MemoryRangeTable, snapshot_from_id, versioned_state_from_id, Migratable,
     MigratableError, Pausable, Snapshot, SnapshotData, Snapshottable, Transportable,
 };
-use vm_virtio::AccessPlatform;
-use vm_virtio::VirtioDeviceType;
 use vmm_sys_util::eventfd::EventFd;
 #[cfg(target_arch = "x86_64")]
 use {devices::debug_console, devices::legacy::Serial};
@@ -97,16 +82,6 @@ const IOAPIC_DEVICE_NAME: &str = "__ioapic";
 const SERIAL_DEVICE_NAME: &str = "__serial";
 #[cfg(target_arch = "x86_64")]
 const DEBUGCON_DEVICE_NAME: &str = "__debug_console";
-const RNG_DEVICE_NAME: &str = "__rng";
-const IOMMU_DEVICE_NAME: &str = "__iommu";
-const CONSOLE_DEVICE_NAME: &str = "__console";
-const PVPANIC_DEVICE_NAME: &str = "__pvpanic";
-
-// Devices that the user may name and for which we generate
-// identifiers if the user doesn't give one
-const DISK_DEVICE_NAME_PREFIX: &str = "_disk";
-const NET_DEVICE_NAME_PREFIX: &str = "_net";
-const VIRTIO_PCI_DEVICE_NAME_PREFIX: &str = "_virtio-pci";
 
 /// Errors associated with device manager
 #[derive(Debug)]
@@ -128,9 +103,6 @@ pub enum DeviceManagerError {
 
     /// Failed to parse disk image format
     DetectImageType(io::Error),
-
-    /// Cannot open qcow disk path
-    QcowDeviceCreate(qcow::Error),
 
     /// Cannot create serial manager
     CreateSerialManager(SerialManagerError),
@@ -315,9 +287,6 @@ pub enum DeviceManagerError {
 
     /// Failed to set O_DIRECT flag to file descriptor
     SetDirectIo,
-
-    /// Failed to create QcowDiskSync
-    CreateQcowDiskSync(qcow::Error),
 
     /// Cannot duplicate file descriptor
     DupFd(vmm_sys_util::errno::Error),
@@ -562,9 +531,6 @@ pub struct DeviceManager {
     // Console abstraction
     console: Arc<Console>,
 
-    // console PTY
-    console_pty: Option<Arc<Mutex<PtyPair>>>,
-
     // serial PTY
     serial_pty: Option<Arc<Mutex<PtyPair>>>,
 
@@ -573,9 +539,6 @@ pub struct DeviceManager {
 
     // Serial Manager
     serial_manager: Option<Arc<SerialManager>>,
-
-    // pty foreground status,
-    console_resize_pipe: Option<Arc<File>>,
 
     // To restore on exit.
     original_termios_opt: Arc<Mutex<Option<termios>>>,
@@ -660,7 +623,6 @@ impl DeviceManager {
         cpu_manager: Arc<Mutex<CpuManager>>,
         exit_evt: EventFd,
         reset_evt: EventFd,
-        numa_nodes: NumaNodes,
         timestamp: Instant,
         snapshot: Option<Snapshot>,
         dynamic: bool,
@@ -791,9 +753,7 @@ impl DeviceManager {
             selected_segment: 0,
             serial_pty: None,
             serial_manager: None,
-            console_pty: None,
             debug_console_pty: None,
-            console_resize_pipe: None,
             original_termios_opt: Arc::new(Mutex::new(None)),
             timestamp,
             acpi_platform_addresses: AcpiPlatformAddresses::default(),
@@ -820,28 +780,16 @@ impl DeviceManager {
             .map(|pty| pty.lock().unwrap().clone())
     }
 
-    pub fn console_pty(&self) -> Option<PtyPair> {
-        self.console_pty
-            .as_ref()
-            .map(|pty| pty.lock().unwrap().clone())
-    }
-
     pub fn debug_console_pty(&self) -> Option<PtyPair> {
         self.debug_console_pty
             .as_ref()
             .map(|pty| pty.lock().unwrap().clone())
     }
 
-    pub fn console_resize_pipe(&self) -> Option<Arc<File>> {
-        self.console_resize_pipe.clone()
-    }
-
     pub fn create_devices(
         &mut self,
         serial_pty: Option<PtyPair>,
-        console_pty: Option<PtyPair>,
         debug_console_pty: Option<PtyPair>,
-        console_resize_pipe: Option<File>,
         original_termios_opt: Arc<Mutex<Option<termios>>>,
     ) -> DeviceManagerResult<()> {
 
@@ -900,9 +848,7 @@ impl DeviceManager {
         self.console = self.add_console_devices(
             &legacy_interrupt_manager,
             serial_pty,
-            console_pty,
             debug_console_pty,
-            console_resize_pipe,
         )?;
 
         self.legacy_interrupt_manager = Some(legacy_interrupt_manager);
@@ -1454,10 +1400,8 @@ impl DeviceManager {
         &mut self,
         interrupt_manager: &Arc<dyn InterruptManager<GroupConfig = LegacyIrqGroupConfig>>,
         serial_pty: Option<PtyPair>,
-        console_pty: Option<PtyPair>,
         #[cfg(target_arch = "x86_64")] debug_console_pty: Option<PtyPair>,
         #[cfg(not(target_arch = "x86_64"))] _: Option<PtyPair>,
-        console_resize_pipe: Option<File>,
     ) -> DeviceManagerResult<Arc<Console>> {
         let serial_config = self.config.lock().unwrap().serial.clone();
         let serial_writer: Option<Box<dyn io::Write + Send>> = match serial_config.mode {
@@ -1583,10 +1527,6 @@ impl DeviceManager {
         self.cmdline_additions.as_slice()
     }
 
-    pub fn update_memory(&self, new_region: &Arc<GuestRegionMmap>) -> DeviceManagerResult<()> {
-        Ok(())
-    }
-
     pub fn notify_hotplug(
         &self,
         _notification_type: AcpiNotificationFlags,
@@ -1601,20 +1541,6 @@ impl DeviceManager {
             .map_err(DeviceManagerError::HotPlugNotification);
     }
 
-    pub fn remove_device(&mut self, id: String) -> DeviceManagerResult<()> {
-        // The node can be directly a PCI node in case the 'id' refers to a
-        // VFIO device or a virtio-pci one.
-        // In case the 'id' refers to a virtio device, we must find the PCI
-        // node by looking at the parent.
-        let device_tree = self.device_tree.lock().unwrap();
-        let node = device_tree
-            .get(&id)
-            .ok_or(DeviceManagerError::UnknownDeviceId(id))?;
-
-
-        Ok(())
-    }
-
     pub fn eject_device(&mut self, pci_segment_id: u16, device_id: u8) -> DeviceManagerResult<()> {
         info!(
             "Ejecting device_id = {} on segment_id={}",
@@ -1624,16 +1550,8 @@ impl DeviceManager {
         // Convert the device ID into the corresponding b/d/f.
         let pci_device_bdf = PciBdf::new(pci_segment_id, 0, device_id, 0);
 
-        // Remove the device from the device tree along with its children.
-        let mut device_tree = self.device_tree.lock().unwrap();
-        let pci_device_node = device_tree
-            .remove_node_by_pci_bdf(pci_device_bdf)
-            .ok_or(DeviceManagerError::MissingPciDevice)?;
-
-        let mut iommu_attached = false;
         if let Some((_, iommu_attached_devices)) = &self.iommu_attached_devices {
             if iommu_attached_devices.contains(&pci_device_bdf) {
-                iommu_attached = true;
             }
         }
 
@@ -1645,7 +1563,7 @@ impl DeviceManager {
     }
 
     pub fn counters(&self) -> HashMap<String, HashMap<&'static str, Wrapping<u64>>> {
-        let mut counters = HashMap::new();
+        let counters = HashMap::new();
 
         counters
     }
@@ -1690,10 +1608,6 @@ impl DeviceManager {
     }
 }
 
-fn numa_node_id_from_pci_segment_id(numa_nodes: &NumaNodes, pci_segment_id: u16) -> u32 {
-    0
-}
-
 struct TpmDevice {}
 
 impl Aml for TpmDevice {
@@ -1722,7 +1636,7 @@ impl Aml for DeviceManager {
         #[cfg(target_arch = "aarch64")]
         use arch::aarch64::DeviceInfoForFdt;
 
-        let mut pci_scan_inner: Vec<&dyn Aml> = Vec::new();
+        let pci_scan_inner: Vec<&dyn Aml> = Vec::new();
 
         // PCI hotplug controller
         aml::Device::new(
@@ -1783,7 +1697,7 @@ impl Aml for DeviceManager {
         )
         .to_aml_bytes(sink);
 
-        let mut mbrd_memory_refs = Vec::new();
+        let mbrd_memory_refs = Vec::new();
 
         aml::Device::new(
             "_SB_.MBRD".into(),
@@ -1970,12 +1884,8 @@ impl Migratable for DeviceManager {
     }
 }
 
-const PCIU_FIELD_OFFSET: u64 = 0;
-const PCID_FIELD_OFFSET: u64 = 4;
 const B0EJ_FIELD_OFFSET: u64 = 8;
 const PSEG_FIELD_OFFSET: u64 = 12;
-const PCIU_FIELD_SIZE: usize = 4;
-const PCID_FIELD_SIZE: usize = 4;
 const B0EJ_FIELD_SIZE: usize = 4;
 const PSEG_FIELD_SIZE: usize = 4;
 

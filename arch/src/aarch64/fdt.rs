@@ -6,7 +6,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the THIRD-PARTY file.
 
-use crate::{NumaNodes, PciSpaceInfo};
+use crate::{NumaNodes};
 use byteorder::{BigEndian, ByteOrder};
 use hypervisor::arch::aarch64::gic::Vgic;
 use std::cmp;
@@ -21,8 +21,7 @@ use super::super::DeviceType;
 use super::super::GuestMemoryMmap;
 use super::super::InitramfsConfig;
 use super::layout::{
-    IRQ_BASE, MEM_32BIT_DEVICES_SIZE, MEM_32BIT_DEVICES_START, MEM_PCI_IO_SIZE, MEM_PCI_IO_START,
-    PCI_HIGH_BASE, PCI_MMIO_CONFIG_SIZE_PER_SEGMENT,
+    IRQ_BASE,
 };
 use std::fs;
 use std::path::Path;
@@ -37,8 +36,6 @@ const MSI_PHANDLE: u32 = 2;
 const CLOCK_PHANDLE: u32 = 3;
 // This is a value for uniquely identifying the FDT node containing the gpio controller.
 const GPIO_PHANDLE: u32 = 4;
-// This is a value for virtio-iommu. Now only one virtio-iommu device is supported.
-const VIRTIO_IOMMU_PHANDLE: u32 = 5;
 // NOTE: Keep FIRST_VCPU_PHANDLE the last PHANDLE defined.
 // This is a value for uniquely identifying the FDT node containing the first vCPU.
 // The last number of vCPU phandle depends on the number of vCPUs.
@@ -223,9 +220,7 @@ pub fn create_fdt<T: DeviceInfoForFdt + Clone + Debug, S: ::std::hash::BuildHash
     device_info: &HashMap<(DeviceType, String), T, S>,
     gic_device: &Arc<Mutex<dyn Vgic>>,
     initrd: &Option<InitramfsConfig>,
-    pci_space_info: &[PciSpaceInfo],
     numa_nodes: &NumaNodes,
-    virtio_iommu_bdf: Option<u32>,
     pmu_supported: bool,
 ) -> FdtWriterResult<Vec<u8>> {
     // Allocate stuff necessary for the holding the blob.
@@ -256,7 +251,6 @@ pub fn create_fdt<T: DeviceInfoForFdt + Clone + Debug, S: ::std::hash::BuildHash
     create_clock_node(&mut fdt)?;
     create_psci_node(&mut fdt)?;
     create_devices_node(&mut fdt, device_info)?;
-    create_pci_nodes(&mut fdt, pci_space_info, virtio_iommu_bdf)?;
     if numa_nodes.len() > 1 {
         create_distance_map_node(&mut fdt, numa_nodes)?;
     }
@@ -879,149 +873,6 @@ fn create_pmu_node(fdt: &mut FdtWriter) -> FdtWriterResult<()> {
     fdt.property_string("compatible", compatible)?;
     fdt.property_array_u32("interrupts", &irq)?;
     fdt.end_node(pmu_node)?;
-    Ok(())
-}
-
-fn create_pci_nodes(
-    fdt: &mut FdtWriter,
-    pci_device_info: &[PciSpaceInfo],
-    virtio_iommu_bdf: Option<u32>,
-) -> FdtWriterResult<()> {
-    // Add node for PCIe controller.
-    // See Documentation/devicetree/bindings/pci/host-generic-pci.txt in the kernel
-    // and https://elinux.org/Device_Tree_Usage.
-    // In multiple PCI segments setup, each PCI segment needs a PCI node.
-    for pci_device_info_elem in pci_device_info.iter() {
-        // EDK2 requires the PCIe high space above 4G address.
-        // The actual space in CLH follows the RAM. If the RAM space is small, the PCIe high space
-        // could fall bellow 4G.
-        // Here we cut off PCI device space below 8G in FDT to workaround the EDK2 check.
-        // But the address written in ACPI is not impacted.
-        let (pci_device_base_64bit, pci_device_size_64bit) =
-            if pci_device_info_elem.pci_device_space_start < PCI_HIGH_BASE.raw_value() {
-                (
-                    PCI_HIGH_BASE.raw_value(),
-                    pci_device_info_elem.pci_device_space_size
-                        - (PCI_HIGH_BASE.raw_value() - pci_device_info_elem.pci_device_space_start),
-                )
-            } else {
-                (
-                    pci_device_info_elem.pci_device_space_start,
-                    pci_device_info_elem.pci_device_space_size,
-                )
-            };
-        // There is no specific requirement of the 32bit MMIO range, and
-        // therefore at least we can make these ranges 4K aligned.
-        let pci_device_size_32bit: u64 =
-            MEM_32BIT_DEVICES_SIZE / ((1 << 12) * pci_device_info.len() as u64) * (1 << 12);
-        let pci_device_base_32bit: u64 = MEM_32BIT_DEVICES_START.0
-            + pci_device_size_32bit * pci_device_info_elem.pci_segment_id as u64;
-
-        let ranges = [
-            // io addresses. Since AArch64 will not use IO address,
-            // we can set the same IO address range for every segment.
-            0x1000000,
-            0_u32,
-            0_u32,
-            (MEM_PCI_IO_START.0 >> 32) as u32,
-            MEM_PCI_IO_START.0 as u32,
-            (MEM_PCI_IO_SIZE >> 32) as u32,
-            MEM_PCI_IO_SIZE as u32,
-            // mmio addresses
-            0x2000000,                            // (ss = 10: 32-bit memory space)
-            (pci_device_base_32bit >> 32) as u32, // PCI address
-            pci_device_base_32bit as u32,
-            (pci_device_base_32bit >> 32) as u32, // CPU address
-            pci_device_base_32bit as u32,
-            (pci_device_size_32bit >> 32) as u32, // size
-            pci_device_size_32bit as u32,
-            // device addresses
-            0x3000000,                            // (ss = 11: 64-bit memory space)
-            (pci_device_base_64bit >> 32) as u32, // PCI address
-            pci_device_base_64bit as u32,
-            (pci_device_base_64bit >> 32) as u32, // CPU address
-            pci_device_base_64bit as u32,
-            (pci_device_size_64bit >> 32) as u32, // size
-            pci_device_size_64bit as u32,
-        ];
-        let bus_range = [0, 0]; // Only bus 0
-        let reg = [
-            pci_device_info_elem.mmio_config_address,
-            PCI_MMIO_CONFIG_SIZE_PER_SEGMENT,
-        ];
-        // See kernel document Documentation/devicetree/bindings/pci/pci-msi.txt
-        let msi_map = [
-            // rid-base: A single cell describing the first RID matched by the entry.
-            0x0,
-            // msi-controller: A single phandle to an MSI controller.
-            MSI_PHANDLE,
-            // msi-base: An msi-specifier describing the msi-specifier produced for the
-            // first RID matched by the entry.
-            (pci_device_info_elem.pci_segment_id as u32) << 8,
-            // length: A single cell describing how many consecutive RIDs are matched
-            // following the rid-base.
-            0x100,
-        ];
-
-        let pci_node_name = format!("pci@{:x}", pci_device_info_elem.mmio_config_address);
-        let pci_node = fdt.begin_node(&pci_node_name)?;
-
-        fdt.property_string("compatible", "pci-host-ecam-generic")?;
-        fdt.property_string("device_type", "pci")?;
-        fdt.property_array_u32("ranges", &ranges)?;
-        fdt.property_array_u32("bus-range", &bus_range)?;
-        fdt.property_u32(
-            "linux,pci-domain",
-            pci_device_info_elem.pci_segment_id as u32,
-        )?;
-        fdt.property_u32("#address-cells", 3)?;
-        fdt.property_u32("#size-cells", 2)?;
-        fdt.property_array_u64("reg", &reg)?;
-        fdt.property_u32("#interrupt-cells", 1)?;
-        fdt.property_null("interrupt-map")?;
-        fdt.property_null("interrupt-map-mask")?;
-        fdt.property_null("dma-coherent")?;
-        fdt.property_array_u32("msi-map", &msi_map)?;
-        fdt.property_u32("msi-parent", MSI_PHANDLE)?;
-
-        if pci_device_info_elem.pci_segment_id == 0 {
-            if let Some(virtio_iommu_bdf) = virtio_iommu_bdf {
-                // See kernel document Documentation/devicetree/bindings/pci/pci-iommu.txt
-                // for 'iommu-map' attribute setting.
-                let iommu_map = [
-                    0_u32,
-                    VIRTIO_IOMMU_PHANDLE,
-                    0_u32,
-                    virtio_iommu_bdf,
-                    virtio_iommu_bdf + 1,
-                    VIRTIO_IOMMU_PHANDLE,
-                    virtio_iommu_bdf + 1,
-                    0xffff - virtio_iommu_bdf,
-                ];
-                fdt.property_array_u32("iommu-map", &iommu_map)?;
-
-                // See kernel document Documentation/devicetree/bindings/virtio/iommu.txt
-                // for virtio-iommu node settings.
-                let virtio_iommu_node_name = format!("virtio_iommu@{virtio_iommu_bdf:x}");
-                let virtio_iommu_node = fdt.begin_node(&virtio_iommu_node_name)?;
-                fdt.property_u32("#iommu-cells", 1)?;
-                fdt.property_string("compatible", "virtio,pci-iommu")?;
-
-                // 'reg' is a five-cell address encoded as
-                // (phys.hi phys.mid phys.lo size.hi size.lo). phys.hi should contain the
-                // device's BDF as 0b00000000 bbbbbbbb dddddfff 00000000. The other cells
-                // should be zero.
-                let reg = [virtio_iommu_bdf << 8, 0_u32, 0_u32, 0_u32, 0_u32];
-                fdt.property_array_u32("reg", &reg)?;
-                fdt.property_u32("phandle", VIRTIO_IOMMU_PHANDLE)?;
-
-                fdt.end_node(virtio_iommu_node)?;
-            }
-        }
-
-        fdt.end_node(pci_node)?;
-    }
-
     Ok(())
 }
 

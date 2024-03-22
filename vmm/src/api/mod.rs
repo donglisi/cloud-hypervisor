@@ -36,7 +36,7 @@ pub mod dbus;
 pub use self::dbus::start_dbus_thread;
 
 use crate::config::{
-    DiskConfig, NetConfig, RestoreConfig,
+    RestoreConfig,
     VmConfig,
 };
 use crate::device_tree::DeviceTree;
@@ -298,8 +298,6 @@ pub trait RequestHandler {
     fn vm_delete(&mut self) -> Result<(), VmError>;
 
     fn vmm_shutdown(&mut self) -> Result<(), VmError>;
-
-    fn vm_remove_device(&mut self, id: String) -> Result<(), VmError>;
 
     fn vm_counters(&mut self) -> Result<Option<Vec<u8>>, VmError>;
 
@@ -704,43 +702,6 @@ impl ApiAction for VmReceiveMigration {
             let response = vmm
                 .vm_receive_migration(data)
                 .map_err(ApiError::VmReceiveMigration)
-                .map(|_| ApiResponsePayload::Empty);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
-
-pub struct VmRemoveDevice;
-
-impl ApiAction for VmRemoveDevice {
-    type RequestBody = VmRemoveDeviceData;
-    type ResponseBody = Option<Body>;
-
-    fn request(
-        &self,
-        remove_device_data: Self::RequestBody,
-        response_sender: Sender<ApiResponse>,
-    ) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmRemoveDevice {:?}", remove_device_data);
-
-            let response = vmm
-                .vm_remove_device(remove_device_data.id)
-                .map_err(ApiError::VmRemoveDevice)
                 .map(|_| ApiResponsePayload::Empty);
 
             response_sender

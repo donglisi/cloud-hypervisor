@@ -11,7 +11,7 @@ use crate::api::{
     VmSendMigrationData, VmmPingResponse,
 };
 use crate::config::{
-    add_to_config, DiskConfig, NetConfig, RestoreConfig,
+    RestoreConfig,
     VmConfig,
 };
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
@@ -441,7 +441,6 @@ pub struct Vmm {
     vm: Option<Vm>,
     vm_config: Option<Arc<Mutex<VmConfig>>>,
     hypervisor: Arc<dyn hypervisor::Hypervisor>,
-    activate_evt: EventFd,
     signals: Option<Handle>,
     threads: Vec<thread::JoinHandle<()>>,
     original_termios_opt: Arc<Mutex<Option<termios>>>,
@@ -522,7 +521,6 @@ impl Vmm {
     ) -> Result<Self> {
         let mut epoll = EpollContext::new().map_err(Error::Epoll)?;
         let reset_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::EventFdCreate)?;
-        let activate_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::EventFdCreate)?;
 
         epoll
             .add_event(&exit_evt, EpollDispatch::Exit)
@@ -554,7 +552,6 @@ impl Vmm {
             vm: None,
             vm_config: None,
             hypervisor,
-            activate_evt,
             signals: None,
             threads: vec![],
             original_termios_opt: Arc::new(Mutex::new(None)),
@@ -661,9 +658,6 @@ impl Vmm {
         let debug_evt = self.vm_debug_evt.try_clone().map_err(|e| {
             MigratableError::MigrateReceive(anyhow!("Error cloning debug EventFd: {}", e))
         })?;
-        let activate_evt = self.activate_evt.try_clone().map_err(|e| {
-            MigratableError::MigrateReceive(anyhow!("Error cloning activate EventFd: {}", e))
-        })?;
 
         let timestamp = Instant::now();
         let hypervisor_vm = mm.lock().unwrap().vm.clone();
@@ -676,10 +670,7 @@ impl Vmm {
             #[cfg(feature = "guest_debug")]
             debug_evt,
             self.hypervisor.clone(),
-            activate_evt,
             timestamp,
-            None,
-            None,
             None,
             None,
             Arc::clone(&self.original_termios_opt),
@@ -1094,10 +1085,6 @@ impl RequestHandler for Vmm {
                     .vm_debug_evt
                     .try_clone()
                     .map_err(VmError::EventFdClone)?;
-                let activate_evt = self
-                    .activate_evt
-                    .try_clone()
-                    .map_err(VmError::EventFdClone)?;
 
                 if let Some(ref vm_config) = self.vm_config {
                     let vm = Vm::new(
@@ -1107,9 +1094,6 @@ impl RequestHandler for Vmm {
                         #[cfg(feature = "guest_debug")]
                         vm_debug_evt,
                         self.hypervisor.clone(),
-                        activate_evt,
-                        None,
-                        None,
                         None,
                         None,
                         Arc::clone(&self.original_termios_opt),
@@ -1193,10 +1177,6 @@ impl RequestHandler for Vmm {
             .vm_debug_evt
             .try_clone()
             .map_err(VmError::EventFdClone)?;
-        let activate_evt = self
-            .activate_evt
-            .try_clone()
-            .map_err(VmError::EventFdClone)?;
 
         let vm = Vm::new(
             vm_config,
@@ -1205,9 +1185,6 @@ impl RequestHandler for Vmm {
             #[cfg(feature = "guest_debug")]
             debug_evt,
             self.hypervisor.clone(),
-            activate_evt,
-            None,
-            None,
             None,
             None,
             Arc::clone(&self.original_termios_opt),
@@ -1244,23 +1221,16 @@ impl RequestHandler for Vmm {
 
     fn vm_reboot(&mut self) -> result::Result<(), VmError> {
         // First we stop the current VM
-        let (config, serial_pty, console_pty, debug_console_pty, console_resize_pipe) =
+        let (config, serial_pty, debug_console_pty) =
             if let Some(mut vm) = self.vm.take() {
                 let config = vm.get_config();
                 let serial_pty = vm.serial_pty();
-                let console_pty = vm.console_pty();
                 let debug_console_pty = vm.debug_console_pty();
-                let console_resize_pipe = vm
-                    .console_resize_pipe()
-                    .as_ref()
-                    .map(|pipe| pipe.try_clone().unwrap());
                 vm.shutdown()?;
                 (
                     config,
                     serial_pty,
-                    console_pty,
                     debug_console_pty,
-                    console_resize_pipe,
                 )
             } else {
                 return Err(VmError::VmNotCreated);
@@ -1271,10 +1241,6 @@ impl RequestHandler for Vmm {
         #[cfg(feature = "guest_debug")]
         let debug_evt = self
             .vm_debug_evt
-            .try_clone()
-            .map_err(VmError::EventFdClone)?;
-        let activate_evt = self
-            .activate_evt
             .try_clone()
             .map_err(VmError::EventFdClone)?;
 
@@ -1293,11 +1259,8 @@ impl RequestHandler for Vmm {
             #[cfg(feature = "guest_debug")]
             debug_evt,
             self.hypervisor.clone(),
-            activate_evt,
             serial_pty,
-            console_pty,
             debug_console_pty,
-            console_resize_pipe,
             Arc::clone(&self.original_termios_opt),
             None,
             None,
@@ -1369,26 +1332,6 @@ impl RequestHandler for Vmm {
     fn vmm_shutdown(&mut self) -> result::Result<(), VmError> {
         self.vm_delete()?;
         Ok(())
-    }
-
-    fn vm_remove_device(&mut self, id: String) -> result::Result<(), VmError> {
-        if let Some(ref mut vm) = self.vm {
-            if let Err(e) = vm.remove_device(id) {
-                error!("Error when removing device from the VM: {:?}", e);
-                Err(e)
-            } else {
-                Ok(())
-            }
-        } else if let Some(ref config) = self.vm_config {
-            let mut config = config.lock().unwrap();
-            if config.remove_device(&id) {
-                Ok(())
-            } else {
-                Err(VmError::NoDeviceToRemove(id))
-            }
-        } else {
-            Err(VmError::VmNotCreated)
-        }
     }
 
     fn vm_counters(&mut self) -> result::Result<Option<Vec<u8>>, VmError> {
