@@ -611,9 +611,6 @@ impl Vm {
             exit_evt.try_clone().map_err(Error::EventFdClone)?,
             reset_evt,
             numa_nodes.clone(),
-            &activate_evt,
-            force_iommu,
-            boot_id_list,
             timestamp,
             snapshot_from_id(snapshot.as_ref(), DEVICE_MANAGER_SNAPSHOT_ID),
             dynamic,
@@ -1181,18 +1178,6 @@ impl Vm {
             .unwrap()
             .get_device_info()
             .clone();
-
-        for pci_segment in self.device_manager.lock().unwrap().pci_segments().iter() {
-            let pci_space = PciSpaceInfo {
-                pci_segment_id: pci_segment.id,
-                mmio_config_address: pci_segment.mmio_config_address,
-                pci_device_space_start: pci_segment.start_of_mem64_area,
-                pci_device_space_size: pci_segment.end_of_mem64_area
-                    - pci_segment.start_of_mem64_area
-                    + 1,
-            };
-            pci_space_info.push(pci_space);
-        }
 
         let virtio_iommu_bdf = self
             .device_manager

@@ -5,7 +5,6 @@
 use crate::cpu::CpuManager;
 use crate::device_manager::DeviceManager;
 use crate::memory_manager::MemoryManager;
-use crate::pci_segment::PciSegment;
 use crate::{GuestMemoryMmap, GuestRegionMmap};
 #[cfg(target_arch = "aarch64")]
 use acpi_tables::sdt::GenericAddress;
@@ -240,25 +239,6 @@ fn create_facp_table(dsdt_offset: GuestAddress, device_manager: &Arc<Mutex<Devic
     facp.update_checksum();
 
     facp
-}
-
-fn create_mcfg_table(pci_segments: &[PciSegment]) -> Sdt {
-    let mut mcfg = Sdt::new(*b"MCFG", 36, 1, *b"CLOUDH", *b"CHMCFG  ", 1);
-
-    // MCFG reserved 8 bytes
-    mcfg.append(0u64);
-
-    for segment in pci_segments {
-        // 32-bit PCI enhanced configuration mechanism
-        mcfg.append(PciRangeEntry {
-            base_address: segment.mmio_config_address,
-            segment: segment.id,
-            start: 0,
-            end: 0,
-            ..Default::default()
-        });
-    }
-    mcfg
 }
 
 fn create_tpm2_table() -> Sdt {
@@ -506,82 +486,6 @@ fn create_dbg2_table(base_address: u64) -> Sdt {
     dbg2
 }
 
-#[cfg(target_arch = "aarch64")]
-fn create_iort_table(pci_segments: &[PciSegment]) -> Sdt {
-    const ACPI_IORT_NODE_ITS_GROUP: u8 = 0x00;
-    const ACPI_IORT_NODE_PCI_ROOT_COMPLEX: u8 = 0x02;
-    const ACPI_IORT_NODE_ROOT_COMPLEX_OFFSET: usize = 72;
-    const ACPI_IORT_NODE_ROOT_COMPLEX_SIZE: usize = 60;
-
-    // The IORT table contains:
-    // - Header (size = 40)
-    // - 1 x ITS Group Node (size = 24)
-    // - N x Root Complex Node (N = number of pci segments, size = 60 x N)
-    let iort_table_size: u32 = (ACPI_IORT_NODE_ROOT_COMPLEX_OFFSET
-        + ACPI_IORT_NODE_ROOT_COMPLEX_SIZE * pci_segments.len())
-        as u32;
-    let mut iort = Sdt::new(*b"IORT", iort_table_size, 2, *b"CLOUDH", *b"CHIORT  ", 1);
-    iort.write(36, ((1 + pci_segments.len()) as u32).to_le());
-    iort.write(40, (48u32).to_le());
-
-    // ITS group node
-    iort.write(48, ACPI_IORT_NODE_ITS_GROUP);
-    // Length of the ITS group node in bytes
-    iort.write(49, (24u16).to_le());
-    // ITS counts
-    iort.write(64, (1u32).to_le());
-
-    // Root Complex Nodes
-    for (i, segment) in pci_segments.iter().enumerate() {
-        let node_offset: usize =
-            ACPI_IORT_NODE_ROOT_COMPLEX_OFFSET + i * ACPI_IORT_NODE_ROOT_COMPLEX_SIZE;
-        iort.write(node_offset, ACPI_IORT_NODE_PCI_ROOT_COMPLEX);
-        // Length of the root complex node in bytes
-        iort.write(
-            node_offset + 1,
-            (ACPI_IORT_NODE_ROOT_COMPLEX_SIZE as u16).to_le(),
-        );
-        // Revision
-        iort.write(node_offset + 3, (3u8).to_le());
-        // Node ID
-        iort.write(node_offset + 4, (segment.id as u32).to_le());
-        // Mapping counts
-        iort.write(node_offset + 8, (1u32).to_le());
-        // Offset from the start of the RC node to the start of its Array of ID mappings
-        iort.write(node_offset + 12, (36u32).to_le());
-        // Fully coherent device
-        iort.write(node_offset + 16, (1u32).to_le());
-        // CCA = CPM = DCAS = 1
-        iort.write(node_offset + 24, 3u8);
-        // PCI segment number
-        iort.write(node_offset + 28, (segment.id as u32).to_le());
-        // Memory address size limit
-        iort.write(node_offset + 32, (64u8).to_le());
-
-        // From offset 32 onward is the space for ID mappings Array.
-        // Now we have only one mapping.
-        let mapping_offset: usize = node_offset + 36;
-        // The lowest value in the input range
-        iort.write(mapping_offset, (0u32).to_le());
-        // The number of IDs in the range minus one:
-        // This should cover all the devices of a segment:
-        // 1 (bus) x 32 (devices) x 8 (functions) = 256
-        // Note: Currently only 1 bus is supported in a segment.
-        iort.write(mapping_offset + 4, (255_u32).to_le());
-        // The lowest value in the output range
-        iort.write(mapping_offset + 8, ((256 * segment.id) as u32).to_le());
-        // id_mapping_array_output_reference should be
-        // the ITS group node (the first node) if no SMMU
-        iort.write(mapping_offset + 12, (48u32).to_le());
-        // Flags
-        iort.write(mapping_offset + 16, (0u32).to_le());
-    }
-
-    iort.update_checksum();
-
-    iort
-}
-
 fn create_viot_table(iommu_bdf: &PciBdf, devices_bdf: &[PciBdf]) -> Sdt {
     // VIOT
     let mut viot = Sdt::new(*b"VIOT", 36, 0, *b"CLOUDH", *b"CHVIOT  ", 0);
@@ -668,75 +572,6 @@ pub fn create_acpi_tables(
         prev_tbl_off = pptt_offset;
     }
 
-    // GTDT
-    #[cfg(target_arch = "aarch64")]
-    {
-        let gtdt = create_gtdt_table();
-        let gtdt_offset = prev_tbl_off.checked_add(prev_tbl_len).unwrap();
-        guest_mem
-            .write_slice(gtdt.as_slice(), gtdt_offset)
-            .expect("Error writing GTDT table");
-        tables.push(gtdt_offset.0);
-        prev_tbl_len = gtdt.len() as u64;
-        prev_tbl_off = gtdt_offset;
-    }
-
-    // MCFG
-    let mcfg = create_mcfg_table(device_manager.lock().unwrap().pci_segments());
-    let mcfg_offset = prev_tbl_off.checked_add(prev_tbl_len).unwrap();
-    guest_mem
-        .write_slice(mcfg.as_slice(), mcfg_offset)
-        .expect("Error writing MCFG table");
-    tables.push(mcfg_offset.0);
-    prev_tbl_len = mcfg.len() as u64;
-    prev_tbl_off = mcfg_offset;
-
-    // SPCR and DBG2
-    #[cfg(target_arch = "aarch64")]
-    {
-        let is_serial_on = device_manager
-            .lock()
-            .unwrap()
-            .get_device_info()
-            .clone()
-            .get(&(DeviceType::Serial, DeviceType::Serial.to_string()))
-            .is_some();
-        let serial_device_addr = arch::layout::LEGACY_SERIAL_MAPPED_IO_START.raw_value();
-        let serial_device_irq = if is_serial_on {
-            device_manager
-                .lock()
-                .unwrap()
-                .get_device_info()
-                .clone()
-                .get(&(DeviceType::Serial, DeviceType::Serial.to_string()))
-                .unwrap()
-                .irq()
-        } else {
-            // If serial is turned off, add a fake device with invalid irq.
-            31
-        };
-
-        // SPCR
-        let spcr = create_spcr_table(serial_device_addr, serial_device_irq);
-        let spcr_offset = prev_tbl_off.checked_add(prev_tbl_len).unwrap();
-        guest_mem
-            .write_slice(spcr.as_slice(), spcr_offset)
-            .expect("Error writing SPCR table");
-        tables.push(spcr_offset.0);
-        prev_tbl_len = spcr.len() as u64;
-        prev_tbl_off = spcr_offset;
-
-        // DBG2
-        let dbg2 = create_dbg2_table(serial_device_addr);
-        let dbg2_offset = prev_tbl_off.checked_add(prev_tbl_len).unwrap();
-        guest_mem
-            .write_slice(dbg2.as_slice(), dbg2_offset)
-            .expect("Error writing DBG2 table");
-        tables.push(dbg2_offset.0);
-        prev_tbl_len = dbg2.len() as u64;
-        prev_tbl_off = dbg2_offset;
-    }
-
     if tpm_enabled {
         // TPM2 Table
         let tpm2 = create_tpm2_table();
@@ -777,18 +612,6 @@ pub fn create_acpi_tables(
         prev_tbl_len = slit.len() as u64;
         prev_tbl_off = slit_offset;
     };
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        let iort = create_iort_table(device_manager.lock().unwrap().pci_segments());
-        let iort_offset = prev_tbl_off.checked_add(prev_tbl_len).unwrap();
-        guest_mem
-            .write_slice(iort.as_slice(), iort_offset)
-            .expect("Error writing IORT table");
-        tables.push(iort_offset.0);
-        prev_tbl_len = iort.len() as u64;
-        prev_tbl_off = iort_offset;
-    }
 
     // VIOT
     if let Some((iommu_bdf, devices_bdf)) = device_manager.lock().unwrap().iommu_attached_devices()

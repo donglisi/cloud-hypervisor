@@ -18,7 +18,6 @@ use crate::device_tree::{DeviceNode, DeviceTree};
 use crate::interrupt::LegacyUserspaceInterruptManager;
 use crate::interrupt::MsiInterruptManager;
 use crate::memory_manager::{Error as MemoryManagerError, MemoryManager, MEMORY_MANAGER_ACPI_SIZE};
-use crate::pci_segment::PciSegment;
 use crate::serial_manager::{Error as SerialManagerError, SerialManager};
 use crate::GuestRegionMmap;
 use crate::PciDeviceInfo;
@@ -612,8 +611,6 @@ pub struct DeviceManager {
     // Counter to keep track of the consumed device IDs.
     device_id_cnt: Wrapping<usize>,
 
-    pci_segments: Vec<PciSegment>,
-
     #[cfg_attr(target_arch = "aarch64", allow(dead_code))]
     // MSI Interrupt Manager
     msi_interrupt_manager: Arc<dyn InterruptManager<GroupConfig = MsiIrqGroupConfig>>,
@@ -639,28 +636,9 @@ pub struct DeviceManager {
     #[cfg(target_arch = "aarch64")]
     id_to_dev_info: HashMap<(DeviceType, String), MmioDeviceInfo>,
 
-    // Virtio Device activation EventFd to allow the VMM thread to trigger device
-    // activation and thus start the threads from the VMM thread
-    activate_evt: EventFd,
-
     acpi_address: GuestAddress,
 
     selected_segment: usize,
-
-    // pvpanic device
-    pvpanic_device: Option<Arc<Mutex<devices::PvPanicDevice>>>,
-
-    // Flag to force setting the iommu on virtio devices
-    force_iommu: bool,
-
-    // io_uring availability if detected
-    io_uring_supported: Option<bool>,
-
-    // aio availability if detected
-    aio_supported: Option<bool>,
-
-    // List of unique identifiers provided at boot through the configuration.
-    boot_id_list: BTreeSet<String>,
 
     // Start time of the VM
     timestamp: Instant,
@@ -683,9 +661,6 @@ impl DeviceManager {
         exit_evt: EventFd,
         reset_evt: EventFd,
         numa_nodes: NumaNodes,
-        activate_evt: &EventFd,
-        force_iommu: bool,
-        boot_id_list: BTreeSet<String>,
         timestamp: Instant,
         snapshot: Option<Snapshot>,
         dynamic: bool,
@@ -772,30 +747,6 @@ impl DeviceManager {
             .allocate_platform_mmio_addresses(None, DEVICE_MANAGER_ACPI_SIZE as u64, None)
             .ok_or(DeviceManagerError::AllocateIoPort)?;
 
-        let mut pci_irq_slots = [0; 32];
-        PciSegment::reserve_legacy_interrupts_for_pci_devices(
-            &address_manager,
-            &mut pci_irq_slots,
-        )?;
-
-        let mut pci_segments = vec![PciSegment::new_default_segment(
-            &address_manager,
-            Arc::clone(&address_manager.pci_mmio32_allocators[0]),
-            Arc::clone(&address_manager.pci_mmio64_allocators[0]),
-            &pci_irq_slots,
-        )?];
-
-        for i in 1..num_pci_segments as usize {
-            pci_segments.push(PciSegment::new(
-                i as u16,
-                numa_node_id_from_pci_segment_id(&numa_nodes, i as u16),
-                &address_manager,
-                Arc::clone(&address_manager.pci_mmio32_allocators[i]),
-                Arc::clone(&address_manager.pci_mmio64_allocators[i]),
-                &pci_irq_slots,
-            )?);
-        }
-
         if dynamic {
             let acpi_address = address_manager
                 .allocator
@@ -831,15 +782,11 @@ impl DeviceManager {
             msi_interrupt_manager,
             legacy_interrupt_manager: None,
             iommu_attached_devices: None,
-            pci_segments,
             device_tree,
             exit_evt,
             reset_evt,
             #[cfg(target_arch = "aarch64")]
             id_to_dev_info: HashMap::new(),
-            activate_evt: activate_evt
-                .try_clone()
-                .map_err(DeviceManagerError::EventFd)?,
             acpi_address,
             selected_segment: 0,
             serial_pty: None,
@@ -848,11 +795,6 @@ impl DeviceManager {
             debug_console_pty: None,
             console_resize_pipe: None,
             original_termios_opt: Arc::new(Mutex::new(None)),
-            pvpanic_device: None,
-            force_iommu,
-            io_uring_supported: None,
-            aio_supported: None,
-            boot_id_list,
             timestamp,
             acpi_platform_addresses: AcpiPlatformAddresses::default(),
             snapshot,
@@ -964,10 +906,6 @@ impl DeviceManager {
         )?;
 
         self.legacy_interrupt_manager = Some(legacy_interrupt_manager);
-
-        if self.config.clone().lock().unwrap().pvpanic {
-            self.pvpanic_device = self.add_pvpanic_device()?;
-        }
 
         Ok(())
     }
@@ -1617,179 +1555,6 @@ impl DeviceManager {
         Ok(Arc::new(Console {}))
     }
 
-    // Cache whether aio is supported to avoid checking for very block device
-    fn aio_is_supported(&mut self) -> bool {
-        if let Some(supported) = self.aio_supported {
-            return supported;
-        }
-
-        let supported = block_aio_is_supported();
-        self.aio_supported = Some(supported);
-        supported
-    }
-
-    // Cache whether io_uring is supported to avoid probing for very block device
-    fn io_uring_is_supported(&mut self) -> bool {
-        if let Some(supported) = self.io_uring_supported {
-            return supported;
-        }
-
-        let supported = block_io_uring_is_supported();
-        self.io_uring_supported = Some(supported);
-        supported
-    }
-
-    fn next_device_name(&mut self, prefix: &str) -> DeviceManagerResult<String> {
-        let start_id = self.device_id_cnt;
-        loop {
-            // Generate the temporary name.
-            let name = format!("{}{}", prefix, self.device_id_cnt);
-            // Increment the counter.
-            self.device_id_cnt += Wrapping(1);
-            // Check if the name is already in use.
-            if !self.boot_id_list.contains(&name)
-                && !self.device_tree.lock().unwrap().contains_key(&name)
-            {
-                return Ok(name);
-            }
-
-            if self.device_id_cnt == start_id {
-                // We went through a full loop and there's nothing else we can
-                // do.
-                break;
-            }
-        }
-        Err(DeviceManagerError::NoAvailableDeviceName)
-    }
-
-    fn add_pci_device(
-        &mut self,
-        bus_device: Arc<Mutex<dyn BusDevice>>,
-        pci_device: Arc<Mutex<dyn PciDevice>>,
-        segment_id: u16,
-        bdf: PciBdf,
-        resources: Option<Vec<Resource>>,
-    ) -> DeviceManagerResult<Vec<Resource>> {
-        let bars = pci_device
-            .lock()
-            .unwrap()
-            .allocate_bars(
-                &self.address_manager.allocator,
-                &mut self.pci_segments[segment_id as usize]
-                    .mem32_allocator
-                    .lock()
-                    .unwrap(),
-                &mut self.pci_segments[segment_id as usize]
-                    .mem64_allocator
-                    .lock()
-                    .unwrap(),
-                resources,
-            )
-            .map_err(DeviceManagerError::AllocateBars)?;
-
-        let mut pci_bus = self.pci_segments[segment_id as usize]
-            .pci_bus
-            .lock()
-            .unwrap();
-
-        pci_bus
-            .add_device(bdf.device() as u32, pci_device)
-            .map_err(DeviceManagerError::AddPciDevice)?;
-
-        self.bus_devices.push(Arc::clone(&bus_device));
-
-        pci_bus
-            .register_mapping(
-                bus_device,
-                #[cfg(target_arch = "x86_64")]
-                self.address_manager.io_bus.as_ref(),
-                self.address_manager.mmio_bus.as_ref(),
-                bars.clone(),
-            )
-            .map_err(DeviceManagerError::AddPciDevice)?;
-
-        let mut new_resources = Vec::new();
-        for bar in bars {
-            new_resources.push(Resource::PciBar {
-                index: bar.idx(),
-                base: bar.addr(),
-                size: bar.size(),
-                type_: bar.region_type().into(),
-                prefetchable: bar.prefetchable().into(),
-            });
-        }
-
-        Ok(new_resources)
-    }
-
-    fn add_pvpanic_device(
-        &mut self,
-    ) -> DeviceManagerResult<Option<Arc<Mutex<devices::PvPanicDevice>>>> {
-        let id = String::from(PVPANIC_DEVICE_NAME);
-        let pci_segment_id = 0x0_u16;
-
-        info!("Creating pvpanic device {}", id);
-
-        let (pci_segment_id, pci_device_bdf, resources) =
-            self.pci_resources(&id, pci_segment_id)?;
-
-        let snapshot = snapshot_from_id(self.snapshot.as_ref(), id.as_str());
-
-        let pvpanic_device = devices::PvPanicDevice::new(id.clone(), snapshot)
-            .map_err(DeviceManagerError::PvPanicCreate)?;
-
-        let pvpanic_device = Arc::new(Mutex::new(pvpanic_device));
-
-        let new_resources = self.add_pci_device(
-            pvpanic_device.clone(),
-            pvpanic_device.clone(),
-            pci_segment_id,
-            pci_device_bdf,
-            resources,
-        )?;
-
-        let mut node = device_node!(id, pvpanic_device);
-
-        node.resources = new_resources;
-        node.pci_bdf = Some(pci_device_bdf);
-
-        self.device_tree.lock().unwrap().insert(id, node);
-
-        Ok(Some(pvpanic_device))
-    }
-
-    fn pci_resources(
-        &self,
-        id: &str,
-        pci_segment_id: u16,
-    ) -> DeviceManagerResult<(u16, PciBdf, Option<Vec<Resource>>)> {
-        // Look for the id in the device tree. If it can be found, that means
-        // the device is being restored, otherwise it's created from scratch.
-        Ok(
-            if let Some(node) = self.device_tree.lock().unwrap().get(id) {
-                info!("Restoring virtio-pci {} resources", id);
-                let pci_device_bdf: PciBdf = node
-                    .pci_bdf
-                    .ok_or(DeviceManagerError::MissingDeviceNodePciBdf)?;
-                let pci_segment_id = pci_device_bdf.segment();
-
-                self.pci_segments[pci_segment_id as usize]
-                    .pci_bus
-                    .lock()
-                    .unwrap()
-                    .get_device_id(pci_device_bdf.device() as usize)
-                    .map_err(DeviceManagerError::GetPciDeviceId)?;
-
-                (pci_segment_id, pci_device_bdf, Some(node.resources.clone()))
-            } else {
-                let pci_device_bdf =
-                    self.pci_segments[pci_segment_id as usize].next_device_bdf()?;
-
-                (pci_segment_id, pci_device_bdf, None)
-            },
-        )
-    }
-
     #[cfg(target_arch = "x86_64")]
     pub fn io_bus(&self) -> &Arc<Bus> {
         &self.address_manager.io_bus
@@ -1807,10 +1572,6 @@ impl DeviceManager {
         self.interrupt_controller
             .as_ref()
             .map(|ic| ic.clone() as Arc<Mutex<dyn InterruptController>>)
-    }
-
-    pub(crate) fn pci_segments(&self) -> &Vec<PciSegment> {
-        &self.pci_segments
     }
 
     pub fn console(&self) -> &Arc<Console> {
@@ -1863,14 +1624,6 @@ impl DeviceManager {
         // Convert the device ID into the corresponding b/d/f.
         let pci_device_bdf = PciBdf::new(pci_segment_id, 0, device_id, 0);
 
-        // Give the PCI device ID back to the PCI bus.
-        self.pci_segments[pci_segment_id as usize]
-            .pci_bus
-            .lock()
-            .unwrap()
-            .put_device_id(device_id as usize)
-            .map_err(DeviceManagerError::PutPciDeviceId)?;
-
         // Remove the device from the device tree along with its children.
         let mut device_tree = self.device_tree.lock().unwrap();
         let pci_device_node = device_tree
@@ -1889,22 +1642,6 @@ impl DeviceManager {
         // any_device, bus_device and pci_device are released, the actual
         // device will be dropped.
         Ok(())
-    }
-
-    fn is_iommu_segment(&self, pci_segment_id: u16) -> bool {
-        self.config
-            .lock()
-            .as_ref()
-            .unwrap()
-            .platform
-            .as_ref()
-            .map(|pc| {
-                pc.iommu_segments
-                    .as_ref()
-                    .map(|v| v.contains(&pci_segment_id))
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default()
     }
 
     pub fn counters(&self) -> HashMap<String, HashMap<&'static str, Wrapping<u64>>> {
@@ -1948,32 +1685,12 @@ impl DeviceManager {
         &self.iommu_attached_devices
     }
 
-    fn validate_identifier(&self, id: &Option<String>) -> DeviceManagerResult<()> {
-        if let Some(id) = id {
-            if id.starts_with("__") {
-                return Err(DeviceManagerError::InvalidIdentifier(id.clone()));
-            }
-
-            if self.device_tree.lock().unwrap().contains_key(id) {
-                return Err(DeviceManagerError::IdentifierNotUnique(id.clone()));
-            }
-        }
-
-        Ok(())
-    }
-
     pub(crate) fn acpi_platform_addresses(&self) -> &AcpiPlatformAddresses {
         &self.acpi_platform_addresses
     }
 }
 
 fn numa_node_id_from_pci_segment_id(numa_nodes: &NumaNodes, pci_segment_id: u16) -> u32 {
-    for (numa_node_id, numa_node) in numa_nodes.iter() {
-        if numa_node.pci_segments.contains(&pci_segment_id) {
-            return *numa_node_id;
-        }
-    }
-
     0
 }
 
@@ -2005,17 +1722,7 @@ impl Aml for DeviceManager {
         #[cfg(target_arch = "aarch64")]
         use arch::aarch64::DeviceInfoForFdt;
 
-        let mut pci_scan_methods = Vec::new();
-        for i in 0..self.pci_segments.len() {
-            pci_scan_methods.push(aml::MethodCall::new(
-                format!("\\_SB_.PC{i:02X}.PCNT").as_str().into(),
-                vec![],
-            ));
-        }
         let mut pci_scan_inner: Vec<&dyn Aml> = Vec::new();
-        for method in &pci_scan_methods {
-            pci_scan_inner.push(method)
-        }
 
         // PCI hotplug controller
         aml::Device::new(
@@ -2076,24 +1783,7 @@ impl Aml for DeviceManager {
         )
         .to_aml_bytes(sink);
 
-        for segment in &self.pci_segments {
-            segment.to_aml_bytes(sink);
-        }
-
-        let mut mbrd_memory = Vec::new();
-
-        for segment in &self.pci_segments {
-            mbrd_memory.push(aml::Memory32Fixed::new(
-                true,
-                segment.mmio_config_address as u32,
-                layout::PCI_MMIO_CONFIG_SIZE_PER_SEGMENT as u32,
-            ))
-        }
-
         let mut mbrd_memory_refs = Vec::new();
-        for mbrd_memory_ref in &mbrd_memory {
-            mbrd_memory_refs.push(mbrd_memory_ref as &dyn Aml);
-        }
 
         aml::Device::new(
             "_SB_.MBRD".into(),
@@ -2292,32 +1982,6 @@ const PSEG_FIELD_SIZE: usize = 4;
 impl BusDevice for DeviceManager {
     fn read(&mut self, base: u64, offset: u64, data: &mut [u8]) {
         match offset {
-            PCIU_FIELD_OFFSET => {
-                assert!(data.len() == PCIU_FIELD_SIZE);
-                data.copy_from_slice(
-                    &self.pci_segments[self.selected_segment]
-                        .pci_devices_up
-                        .to_le_bytes(),
-                );
-                // Clear the PCIU bitmap
-                self.pci_segments[self.selected_segment].pci_devices_up = 0;
-            }
-            PCID_FIELD_OFFSET => {
-                assert!(data.len() == PCID_FIELD_SIZE);
-                data.copy_from_slice(
-                    &self.pci_segments[self.selected_segment]
-                        .pci_devices_down
-                        .to_le_bytes(),
-                );
-                // Clear the PCID bitmap
-                self.pci_segments[self.selected_segment].pci_devices_down = 0;
-            }
-            B0EJ_FIELD_OFFSET => {
-                assert!(data.len() == B0EJ_FIELD_SIZE);
-                // Always return an empty bitmap since the eject is always
-                // taken care of right away during a write access.
-                data.fill(0);
-            }
             PSEG_FIELD_OFFSET => {
                 assert_eq!(data.len(), PSEG_FIELD_SIZE);
                 data.copy_from_slice(&(self.selected_segment as u32).to_le_bytes());
@@ -2349,21 +2013,6 @@ impl BusDevice for DeviceManager {
                     }
                     slot_bitmap &= !(1 << slot_id);
                 }
-            }
-            PSEG_FIELD_OFFSET => {
-                assert_eq!(data.len(), PSEG_FIELD_SIZE);
-                let mut data_array: [u8; 4] = [0, 0, 0, 0];
-                data_array.copy_from_slice(data);
-                let selected_segment = u32::from_le_bytes(data_array) as usize;
-                if selected_segment >= self.pci_segments.len() {
-                    error!(
-                        "Segment selection out of range: {} >= {}",
-                        selected_segment,
-                        self.pci_segments.len()
-                    );
-                    return None;
-                }
-                self.selected_segment = selected_segment;
             }
             _ => error!(
                 "Accessing unknown location at base 0x{:x}, offset 0x{:x}",

@@ -68,7 +68,6 @@ mod igvm;
 pub mod interrupt;
 pub mod memory_manager;
 pub mod migration;
-mod pci_segment;
 mod serial_manager;
 pub mod vm;
 pub mod vm_config;
