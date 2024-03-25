@@ -866,58 +866,6 @@ impl DeviceManager {
             .unwrap()
             .vcpus_kill_signalled()
             .clone();
-        // Add a shutdown device (i8042)
-        let i8042 = Arc::new(Mutex::new(devices::legacy::I8042Device::new(
-            reset_evt.try_clone().unwrap(),
-            vcpus_kill_signalled.clone(),
-        )));
-
-        self.bus_devices
-            .push(Arc::clone(&i8042) as Arc<Mutex<dyn BusDevice>>);
-
-        self.address_manager
-            .io_bus
-            .insert(i8042, 0x61, 0x4)
-            .map_err(DeviceManagerError::BusError)?;
-        {
-            // Add a CMOS emulated device
-            let mem_size = self
-                .memory_manager
-                .lock()
-                .unwrap()
-                .guest_memory()
-                .memory()
-                .last_addr()
-                .0
-                + 1;
-            let mem_below_4g = std::cmp::min(arch::layout::MEM_32BIT_RESERVED_START.0, mem_size);
-            let mem_above_4g = mem_size.saturating_sub(arch::layout::RAM_64BIT_START.0);
-
-            let cmos = Arc::new(Mutex::new(devices::legacy::Cmos::new(
-                mem_below_4g,
-                mem_above_4g,
-                reset_evt,
-                Some(vcpus_kill_signalled),
-            )));
-
-            self.bus_devices
-                .push(Arc::clone(&cmos) as Arc<Mutex<dyn BusDevice>>);
-
-            self.address_manager
-                .io_bus
-                .insert(cmos, 0x70, 0x2)
-                .map_err(DeviceManagerError::BusError)?;
-
-            let fwdebug = Arc::new(Mutex::new(devices::legacy::FwDebugDevice::new()));
-
-            self.bus_devices
-                .push(Arc::clone(&fwdebug) as Arc<Mutex<dyn BusDevice>>);
-
-            self.address_manager
-                .io_bus
-                .insert(fwdebug, 0x402, 0x1)
-                .map_err(DeviceManagerError::BusError)?;
-        }
 
         // 0x80 debug port
         let debug_port = Arc::new(Mutex::new(devices::legacy::DebugPort::new(self.timestamp)));

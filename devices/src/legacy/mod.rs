@@ -7,8 +7,6 @@
 
 #[cfg(target_arch = "x86_64")]
 mod debug_port;
-#[cfg(target_arch = "x86_64")]
-mod fwdebug;
 #[cfg(target_arch = "aarch64")]
 mod rtc_pl031;
 mod serial;
@@ -17,8 +15,6 @@ mod uart_pl011;
 
 #[cfg(target_arch = "x86_64")]
 pub use self::debug_port::DebugPort;
-#[cfg(target_arch = "x86_64")]
-pub use self::fwdebug::FwDebugDevice;
 pub use self::serial::Serial;
 
 #[cfg(target_arch = "aarch64")]
