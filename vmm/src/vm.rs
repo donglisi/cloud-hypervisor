@@ -33,7 +33,7 @@ use crate::memory_manager::{
 use crate::migration::url_to_file;
 use crate::GuestMemoryMmap;
 use crate::{
-    CPU_MANAGER_SNAPSHOT_ID, MEMORY_MANAGER_SNAPSHOT_ID,
+    CPU_MANAGER_SNAPSHOT_ID,
 };
 use anyhow::anyhow;
 use arch::get_host_cpu_phys_bits;
@@ -641,8 +641,6 @@ impl Vm {
         serial_pty: Option<PtyPair>,
         original_termios: Arc<Mutex<Option<termios>>>,
         snapshot: Option<Snapshot>,
-        source_url: Option<&str>,
-        prefault: Option<bool>,
     ) -> Result<Self> {
         let timestamp = Instant::now();
 
@@ -681,7 +679,6 @@ impl Vm {
                 phys_bits,
                 #[cfg(feature = "tdx")]
                 tdx_enabled,
-                None,
                 #[cfg(target_arch = "x86_64")]
                 sgx_epc_config,
             )

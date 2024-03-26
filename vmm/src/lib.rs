@@ -661,8 +661,6 @@ impl RequestHandler for Vmm {
                         None,
                         Arc::clone(&self.original_termios_opt),
                         None,
-                        None,
-                        None,
                     )?;
 
                     self.vm = Some(vm);
@@ -736,8 +734,6 @@ impl RequestHandler for Vmm {
             self.hypervisor.clone(),
             serial_pty,
             Arc::clone(&self.original_termios_opt),
-            None,
-            None,
             None,
         )?;
 
@@ -832,7 +828,6 @@ impl RequestHandler for Vmm {
 }
 
 const CPU_MANAGER_SNAPSHOT_ID: &str = "cpu-manager";
-const MEMORY_MANAGER_SNAPSHOT_ID: &str = "memory-manager";
 
 #[cfg(test)]
 mod unit_tests {

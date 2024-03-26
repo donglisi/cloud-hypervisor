@@ -10,7 +10,6 @@ use crate::coredump::{
     CoredumpMemoryRegion, CoredumpMemoryRegions, DumpState, GuestDebuggableError,
 };
 use crate::migration::url_to_path;
-use crate::MEMORY_MANAGER_SNAPSHOT_ID;
 use crate::{GuestMemoryMmap, GuestRegionMmap};
 use acpi_tables::{aml, Aml};
 use anyhow::anyhow;
@@ -58,8 +57,6 @@ use vm_migration::{
 pub const MEMORY_MANAGER_ACPI_SIZE: usize = 0x18;
 
 const DEFAULT_MEMORY_ZONE: &str = "mem0";
-
-const SNAPSHOT_FILENAME: &str = "memory-ranges";
 
 #[cfg(target_arch = "x86_64")]
 const X86_64_IRQ_BASE: u32 = 5;
@@ -129,9 +126,6 @@ pub struct MemoryManager {
     selected_slot: usize,
     mergeable: bool,
     allocator: Arc<Mutex<SystemAllocator>>,
-    boot_ram: u64,
-    current_ram: u64,
-    next_hotplug_slot: usize,
     shared: bool,
     hugepages: bool,
     hugepage_size: Option<u64>,
@@ -139,7 +133,6 @@ pub struct MemoryManager {
     thp: bool,
     #[cfg(target_arch = "x86_64")]
     sgx_epc_region: Option<SgxEpcRegion>,
-    snapshot_memory_ranges: MemoryRangeTable,
     memory_zones: MemoryZones,
     log_dirty: bool, // Enable dirty logging for created RAM regions
     arch_mem_regions: Vec<ArchMemRegion>,
@@ -771,7 +764,6 @@ impl MemoryManager {
         config: &MemoryConfig,
         prefault: Option<bool>,
         phys_bits: u8,
-        existing_memory_files: Option<HashMap<u32, File>>,
         #[cfg(target_arch = "x86_64")] sgx_epc_config: Option<Vec<SgxEpcConfig>>,
     ) -> Result<Arc<Mutex<MemoryManager>>, Error> {
         let user_provided_zones = config.size == 0;
@@ -799,7 +791,6 @@ impl MemoryManager {
             hotplug_slots,
             next_memory_slot,
             selected_slot,
-            next_hotplug_slot,
         ) = {
             // Init guest memory
             let arch_mem_regions = arch::arch_memory_regions();
@@ -842,7 +833,6 @@ impl MemoryManager {
                 guest_memory,
                 boot_guest_memory,
                 hotplug_slots,
-                0,
                 0,
                 0,
             )
@@ -892,16 +882,12 @@ impl MemoryManager {
             selected_slot,
             mergeable: config.mergeable,
             allocator,
-            boot_ram,
-            current_ram,
-            next_hotplug_slot,
             shared: config.shared,
             hugepages: config.hugepages,
             hugepage_size: config.hugepage_size,
             prefault: config.prefault,
             #[cfg(target_arch = "x86_64")]
             sgx_epc_region: None,
-            snapshot_memory_ranges: MemoryRangeTable::default(),
             memory_zones,
             guest_ram_mappings: Vec::new(),
             acpi_address,
