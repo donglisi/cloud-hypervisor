@@ -7,49 +7,35 @@
 extern crate log;
 
 use crate::api::{
-    ApiRequest, ApiResponse, RequestHandler, VmInfoResponse, VmReceiveMigrationData,
-    VmSendMigrationData, VmmPingResponse,
+    ApiRequest, ApiResponse, RequestHandler, VmInfoResponse, VmmPingResponse,
 };
 use crate::config::{
-    RestoreConfig,
     VmConfig,
 };
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::coredump::GuestDebuggable;
-use crate::memory_manager::MemoryManager;
 #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
 use crate::migration::get_vm_snapshot;
-use crate::migration::{recv_vm_config, recv_vm_state};
 use crate::vm::{Error as VmError, Vm, VmState};
-use anyhow::anyhow;
 #[cfg(feature = "dbus_api")]
 use api::dbus::{DBusApiOptions, DBusApiShutdownChannels};
 use libc::{tcsetattr, termios, EFD_NONBLOCK, SIGINT, SIGTERM, TCSANOW};
 use memory_manager::MemoryManagerSnapshotData;
 use serde::{Deserialize, Serialize};
 use signal_hook::iterator::{Handle, Signals};
-use std::collections::HashMap;
 use std::fs::File;
 use std::io;
 use std::io::{stdout};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use std::os::unix::net::UnixListener;
-use std::os::unix::net::UnixStream;
 use std::panic::AssertUnwindSafe;
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, RecvError, SendError, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 use std::{result, thread};
 use thiserror::Error;
 use vm_memory::bitmap::AtomicBitmap;
-use vm_memory::{ReadVolatile, WriteVolatile};
-use vm_migration::{protocol::*, Migratable};
-use vm_migration::{MigratableError, Pausable, Snapshot, Snapshottable};
 use vmm_sys_util::eventfd::EventFd;
 use vmm_sys_util::signal::unblock_signal;
-use vmm_sys_util::sock_ctrl_msg::ScmSocket;
 
 pub mod api;
 pub mod config;

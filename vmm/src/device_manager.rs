@@ -19,7 +19,7 @@ use crate::interrupt::LegacyUserspaceInterruptManager;
 use crate::interrupt::MsiInterruptManager;
 use crate::memory_manager::{Error as MemoryManagerError, MemoryManager, MEMORY_MANAGER_ACPI_SIZE};
 use crate::serial_manager::{Error as SerialManagerError, SerialManager};
-use crate::{device_node, DEVICE_MANAGER_SNAPSHOT_ID};
+use crate::device_node;
 use acpi_tables::sdt::GenericAddress;
 use acpi_tables::{aml, Aml};
 use arch::layout;

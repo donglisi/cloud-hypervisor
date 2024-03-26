@@ -36,7 +36,6 @@ pub mod dbus;
 pub use self::dbus::start_dbus_thread;
 
 use crate::config::{
-    RestoreConfig,
     VmConfig,
 };
 use crate::device_tree::DeviceTree;

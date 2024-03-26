@@ -200,26 +200,6 @@ impl Pl011 {
         self.out = out;
     }
 
-    fn state(&self) -> Pl011State {
-        Pl011State {
-            flags: self.flags,
-            lcr: self.lcr,
-            rsr: self.rsr,
-            cr: self.cr,
-            dmacr: self.dmacr,
-            debug: self.debug,
-            int_enabled: self.int_enabled,
-            int_level: self.int_level,
-            read_fifo: self.read_fifo.clone().into(),
-            ilpr: self.ilpr,
-            ibrd: self.ibrd,
-            fbrd: self.fbrd,
-            ifl: self.ifl,
-            read_count: self.read_count,
-            read_trigger: self.read_trigger,
-        }
-    }
-
     /// Queues raw bytes for the guest to read and signals the interrupt
     pub fn queue_input_bytes(&mut self, c: &[u8]) -> vmm_sys_util::errno::Result<()> {
         self.read_fifo.extend(c);

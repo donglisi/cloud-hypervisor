@@ -4,7 +4,6 @@
 
 use super::interrupt_controller::{Error, InterruptController};
 extern crate arch;
-use anyhow::anyhow;
 use arch::layout;
 use hypervisor::{
     arch::aarch64::gic::{Vgic, VgicConfig},
