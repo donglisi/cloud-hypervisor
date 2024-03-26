@@ -14,18 +14,15 @@ pub struct DeviceNode {
     pub resources: Vec<Resource>,
     pub parent: Option<String>,
     pub children: Vec<String>,
-    #[serde(skip)]
-    pub migratable: Option<Arc<Mutex<dyn Migratable>>>,
 }
 
 impl DeviceNode {
-    pub fn new(id: String, migratable: Option<Arc<Mutex<dyn Migratable>>>) -> Self {
+    pub fn new(id: String) -> Self {
         DeviceNode {
             id,
             resources: Vec::new(),
             parent: None,
             children: Vec::new(),
-            migratable,
         }
     }
 }
@@ -37,8 +34,7 @@ macro_rules! device_node {
     };
     ($id:ident, $device:ident) => {
         DeviceNode::new(
-            $id.clone(),
-            Some(Arc::clone(&$device) as Arc<Mutex<dyn Migratable>>),
+            $id.clone()
         )
     };
 }

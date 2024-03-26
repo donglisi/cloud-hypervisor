@@ -579,14 +579,6 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
             vmm::api::VmBoot
                 .send(api_evt.try_clone().unwrap(), sender, ())
                 .map_err(Error::VmBoot)?;
-        } else if let Some(restore_params) = cmd_arguments.get_one::<String>("restore") {
-            vmm::api::VmRestore
-                .send(
-                    api_evt.try_clone().unwrap(),
-                    api_request_sender,
-                    config::RestoreConfig::parse(restore_params).map_err(Error::ParsingRestore)?,
-                )
-                .map_err(Error::VmRestore)?;
         }
 
         Ok(())

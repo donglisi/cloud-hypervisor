@@ -551,7 +551,6 @@ dependencies = [
  "vm-allocator",
  "vm-device",
  "vm-memory",
- "vm-migration",
  "vmm-sys-util",
 ]
 

@@ -276,14 +276,6 @@ pub trait RequestHandler {
 
     fn vm_boot(&mut self) -> Result<(), VmError>;
 
-    fn vm_pause(&mut self) -> Result<(), VmError>;
-
-    fn vm_resume(&mut self) -> Result<(), VmError>;
-
-    fn vm_snapshot(&mut self, destination_url: &str) -> Result<(), VmError>;
-
-    fn vm_restore(&mut self, restore_cfg: RestoreConfig) -> Result<(), VmError>;
-
     #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
     fn vm_coredump(&mut self, destination_url: &str) -> Result<(), VmError>;
 
@@ -302,16 +294,6 @@ pub trait RequestHandler {
     fn vm_counters(&mut self) -> Result<Option<Vec<u8>>, VmError>;
 
     fn vm_power_button(&mut self) -> Result<(), VmError>;
-
-    fn vm_receive_migration(
-        &mut self,
-        receive_data_migration: VmReceiveMigrationData,
-    ) -> Result<(), MigratableError>;
-
-    fn vm_send_migration(
-        &mut self,
-        send_data_migration: VmSendMigrationData,
-    ) -> Result<(), MigratableError>;
 }
 
 /// It would be nice if we could pass around an object like this:
@@ -590,39 +572,6 @@ impl ApiAction for VmInfo {
     }
 }
 
-pub struct VmPause;
-
-impl ApiAction for VmPause {
-    type RequestBody = ();
-    type ResponseBody = Option<Body>;
-
-    fn request(&self, _: Self::RequestBody, response_sender: Sender<ApiResponse>) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmPause");
-
-            let response = vmm
-                .vm_pause()
-                .map_err(ApiError::VmPause)
-                .map(|_| ApiResponsePayload::Empty);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
-
 pub struct VmPowerButton;
 
 impl ApiAction for VmPowerButton {
@@ -689,142 +638,6 @@ impl ApiAction for VmReboot {
     }
 }
 
-pub struct VmReceiveMigration;
-
-impl ApiAction for VmReceiveMigration {
-    type RequestBody = VmReceiveMigrationData;
-    type ResponseBody = Option<Body>;
-
-    fn request(&self, data: Self::RequestBody, response_sender: Sender<ApiResponse>) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmReceiveMigration {:?}", data);
-
-            let response = vmm
-                .vm_receive_migration(data)
-                .map_err(ApiError::VmReceiveMigration)
-                .map(|_| ApiResponsePayload::Empty);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
-
-pub struct VmRestore;
-
-impl ApiAction for VmRestore {
-    type RequestBody = RestoreConfig;
-    type ResponseBody = Option<Body>;
-
-    fn request(
-        &self,
-        config: Self::RequestBody,
-        response_sender: Sender<ApiResponse>,
-    ) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmRestore {:?}", config);
-
-            let response = vmm
-                .vm_restore(config)
-                .map_err(ApiError::VmRestore)
-                .map(|_| ApiResponsePayload::Empty);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
-
-pub struct VmResume;
-
-impl ApiAction for VmResume {
-    type RequestBody = ();
-    type ResponseBody = Option<Body>;
-
-    fn request(&self, _: Self::RequestBody, response_sender: Sender<ApiResponse>) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmResume");
-
-            let response = vmm
-                .vm_resume()
-                .map_err(ApiError::VmResume)
-                .map(|_| ApiResponsePayload::Empty);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
-
-pub struct VmSendMigration;
-
-impl ApiAction for VmSendMigration {
-    type RequestBody = VmSendMigrationData;
-    type ResponseBody = Option<Body>;
-
-    fn request(&self, data: Self::RequestBody, response_sender: Sender<ApiResponse>) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmSendMigration {:?}", data);
-
-            let response = vmm
-                .vm_send_migration(data)
-                .map_err(ApiError::VmSendMigration)
-                .map(|_| ApiResponsePayload::Empty);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
-
 pub struct VmShutdown;
 
 impl ApiAction for VmShutdown {
@@ -842,43 +655,6 @@ impl ApiAction for VmShutdown {
             let response = vmm
                 .vm_shutdown()
                 .map_err(ApiError::VmShutdown)
-                .map(|_| ApiResponsePayload::Empty);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
-
-pub struct VmSnapshot;
-
-impl ApiAction for VmSnapshot {
-    type RequestBody = VmSnapshotConfig;
-    type ResponseBody = Option<Body>;
-
-    fn request(
-        &self,
-        config: Self::RequestBody,
-        response_sender: Sender<ApiResponse>,
-    ) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmSnapshot {:?}", config);
-
-            let response = vmm
-                .vm_snapshot(&config.destination_url)
-                .map_err(ApiError::VmSnapshot)
                 .map(|_| ApiResponsePayload::Empty);
 
             response_sender

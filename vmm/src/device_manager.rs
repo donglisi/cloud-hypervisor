@@ -1013,8 +1013,7 @@ impl DeviceManager {
             interrupt_group,
             serial_writer,
             self.timestamp,
-            versioned_state_from_id(self.snapshot.as_ref(), id.as_str())
-                .map_err(DeviceManagerError::RestoreGetState)?,
+            None,
         )));
 
         self.bus_devices
@@ -1447,109 +1446,6 @@ impl Aml for DeviceManager {
             .lock()
             .unwrap()
             .to_aml_bytes(sink)
-    }
-}
-
-impl Pausable for DeviceManager {
-    fn pause(&mut self) -> result::Result<(), MigratableError> {
-        for (_, device_node) in self.device_tree.lock().unwrap().iter() {
-            if let Some(migratable) = &device_node.migratable {
-                migratable.lock().unwrap().pause()?;
-            }
-        }
-        // On AArch64, the pause of device manager needs to trigger
-        // a "pause" of GIC, which will flush the GIC pending tables
-        // and ITS tables to guest RAM.
-        #[cfg(target_arch = "aarch64")]
-        {
-            self.get_interrupt_controller()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .pause()?;
-        };
-
-        Ok(())
-    }
-
-    fn resume(&mut self) -> result::Result<(), MigratableError> {
-        for (_, device_node) in self.device_tree.lock().unwrap().iter() {
-            if let Some(migratable) = &device_node.migratable {
-                migratable.lock().unwrap().resume()?;
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl Snapshottable for DeviceManager {
-    fn id(&self) -> String {
-        DEVICE_MANAGER_SNAPSHOT_ID.to_string()
-    }
-
-    fn snapshot(&mut self) -> std::result::Result<Snapshot, MigratableError> {
-        let mut snapshot = Snapshot::from_data(SnapshotData::new_from_state(&self.state())?);
-
-        // We aggregate all devices snapshots.
-        for (_, device_node) in self.device_tree.lock().unwrap().iter() {
-            if let Some(migratable) = &device_node.migratable {
-                let mut migratable = migratable.lock().unwrap();
-                snapshot.add_snapshot(migratable.id(), migratable.snapshot()?);
-            }
-        }
-
-        Ok(snapshot)
-    }
-}
-
-impl Transportable for DeviceManager {}
-
-impl Migratable for DeviceManager {
-    fn start_dirty_log(&mut self) -> std::result::Result<(), MigratableError> {
-        for (_, device_node) in self.device_tree.lock().unwrap().iter() {
-            if let Some(migratable) = &device_node.migratable {
-                migratable.lock().unwrap().start_dirty_log()?;
-            }
-        }
-        Ok(())
-    }
-
-    fn stop_dirty_log(&mut self) -> std::result::Result<(), MigratableError> {
-        for (_, device_node) in self.device_tree.lock().unwrap().iter() {
-            if let Some(migratable) = &device_node.migratable {
-                migratable.lock().unwrap().stop_dirty_log()?;
-            }
-        }
-        Ok(())
-    }
-
-    fn dirty_log(&mut self) -> std::result::Result<MemoryRangeTable, MigratableError> {
-        let mut tables = Vec::new();
-        for (_, device_node) in self.device_tree.lock().unwrap().iter() {
-            if let Some(migratable) = &device_node.migratable {
-                tables.push(migratable.lock().unwrap().dirty_log()?);
-            }
-        }
-        Ok(MemoryRangeTable::new_from_tables(tables))
-    }
-
-    fn start_migration(&mut self) -> std::result::Result<(), MigratableError> {
-        for (_, device_node) in self.device_tree.lock().unwrap().iter() {
-            if let Some(migratable) = &device_node.migratable {
-                migratable.lock().unwrap().start_migration()?;
-            }
-        }
-        Ok(())
-    }
-
-    fn complete_migration(&mut self) -> std::result::Result<(), MigratableError> {
-        for (_, device_node) in self.device_tree.lock().unwrap().iter() {
-            if let Some(migratable) = &device_node.migratable {
-                migratable.lock().unwrap().complete_migration()?;
-            }
-        }
-        Ok(())
     }
 }
 

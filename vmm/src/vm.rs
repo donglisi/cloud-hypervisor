@@ -1151,13 +1151,6 @@ impl Vm {
 
         state.valid_transition(new_state)?;
 
-        // Wake up the DeviceManager threads so they will get terminated cleanly
-        self.device_manager
-            .lock()
-            .unwrap()
-            .resume()
-            .map_err(Error::Resume)?;
-
         self.cpu_manager
             .lock()
             .unwrap()
@@ -1466,9 +1459,6 @@ impl Vm {
     pub fn boot(&mut self) -> Result<()> {
         info!("Booting VM");
         let current_state = self.get_state()?;
-        if current_state == VmState::Paused {
-            return self.resume().map_err(Error::Resume);
-        }
 
         let new_state = if self.stop_on_boot {
             VmState::BreakPoint
@@ -1806,64 +1796,6 @@ impl Vm {
     }
 }
 
-impl Pausable for Vm {
-    fn pause(&mut self) -> std::result::Result<(), MigratableError> {
-        let mut state = self
-            .state
-            .try_write()
-            .map_err(|e| MigratableError::Pause(anyhow!("Could not get VM state: {}", e)))?;
-        let new_state = VmState::Paused;
-
-        state
-            .valid_transition(new_state)
-            .map_err(|e| MigratableError::Pause(anyhow!("Invalid transition: {:?}", e)))?;
-
-        #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
-        {
-            let mut clock = self
-                .vm
-                .get_clock()
-                .map_err(|e| MigratableError::Pause(anyhow!("Could not get VM clock: {}", e)))?;
-            clock.reset_flags();
-            self.saved_clock = Some(clock);
-        }
-
-        self.cpu_manager.lock().unwrap().pause()?;
-        self.device_manager.lock().unwrap().pause()?;
-
-        *state = new_state;
-
-        Ok(())
-    }
-
-    fn resume(&mut self) -> std::result::Result<(), MigratableError> {
-        let mut state = self
-            .state
-            .try_write()
-            .map_err(|e| MigratableError::Resume(anyhow!("Could not get VM state: {}", e)))?;
-        let new_state = VmState::Running;
-
-        state
-            .valid_transition(new_state)
-            .map_err(|e| MigratableError::Resume(anyhow!("Invalid transition: {:?}", e)))?;
-
-        self.cpu_manager.lock().unwrap().resume()?;
-        #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
-        {
-            if let Some(clock) = &self.saved_clock {
-                self.vm.set_clock(clock).map_err(|e| {
-                    MigratableError::Resume(anyhow!("Could not set VM clock: {}", e))
-                })?;
-            }
-        }
-        self.device_manager.lock().unwrap().resume()?;
-
-        // And we're back to the Running state.
-        *state = new_state;
-        Ok(())
-    }
-}
-
 #[derive(Serialize, Deserialize)]
 pub struct VmSnapshot {
     #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
@@ -1873,170 +1805,6 @@ pub struct VmSnapshot {
 }
 
 pub const VM_SNAPSHOT_ID: &str = "vm";
-impl Snapshottable for Vm {
-    fn id(&self) -> String {
-        VM_SNAPSHOT_ID.to_string()
-    }
-
-    fn snapshot(&mut self) -> std::result::Result<Snapshot, MigratableError> {
-
-        #[cfg(feature = "tdx")]
-        {
-            if self.config.lock().unwrap().is_tdx_enabled() {
-                return Err(MigratableError::Snapshot(anyhow!(
-                    "Snapshot not possible with TDX VM"
-                )));
-            }
-        }
-
-        let current_state = self.get_state().unwrap();
-        if current_state != VmState::Paused {
-            return Err(MigratableError::Snapshot(anyhow!(
-                "Trying to snapshot while VM is running"
-            )));
-        }
-
-        #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
-        let common_cpuid = {
-            let amx = self.config.lock().unwrap().cpus.features.amx;
-            let phys_bits = physical_bits(
-                &self.hypervisor,
-                self.config.lock().unwrap().cpus.max_phys_bits,
-            );
-            arch::generate_common_cpuid(
-                &self.hypervisor,
-                &arch::CpuidConfig {
-                    sgx_epc_sections: None,
-                    phys_bits,
-                    kvm_hyperv: self.config.lock().unwrap().cpus.kvm_hyperv,
-                    #[cfg(feature = "tdx")]
-                    tdx: false,
-                    amx,
-                },
-            )
-            .map_err(|e| {
-                MigratableError::MigrateReceive(anyhow!("Error generating common cpuid: {:?}", e))
-            })?
-        };
-
-        let vm_snapshot_data = serde_json::to_vec(&VmSnapshot {
-            #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
-            clock: self.saved_clock,
-            #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
-            common_cpuid,
-        })
-        .map_err(|e| MigratableError::Snapshot(e.into()))?;
-
-        let mut vm_snapshot = Snapshot::from_data(SnapshotData(vm_snapshot_data));
-
-        let (id, snapshot) = {
-            let mut cpu_manager = self.cpu_manager.lock().unwrap();
-            (cpu_manager.id(), cpu_manager.snapshot()?)
-        };
-        vm_snapshot.add_snapshot(id, snapshot);
-        let (id, snapshot) = {
-            let mut memory_manager = self.memory_manager.lock().unwrap();
-            (memory_manager.id(), memory_manager.snapshot()?)
-        };
-        vm_snapshot.add_snapshot(id, snapshot);
-        let (id, snapshot) = {
-            let mut device_manager = self.device_manager.lock().unwrap();
-            (device_manager.id(), device_manager.snapshot()?)
-        };
-        vm_snapshot.add_snapshot(id, snapshot);
-
-        Ok(vm_snapshot)
-    }
-}
-
-impl Transportable for Vm {
-    fn send(
-        &self,
-        snapshot: &Snapshot,
-        destination_url: &str,
-    ) -> std::result::Result<(), MigratableError> {
-        let mut snapshot_config_path = url_to_path(destination_url)?;
-        snapshot_config_path.push(SNAPSHOT_CONFIG_FILE);
-
-        // Create the snapshot config file
-        let mut snapshot_config_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(snapshot_config_path)
-            .map_err(|e| MigratableError::MigrateSend(e.into()))?;
-
-        // Serialize and write the snapshot config
-        let vm_config = serde_json::to_string(self.config.lock().unwrap().deref())
-            .map_err(|e| MigratableError::MigrateSend(e.into()))?;
-
-        snapshot_config_file
-            .write(vm_config.as_bytes())
-            .map_err(|e| MigratableError::MigrateSend(e.into()))?;
-
-        let mut snapshot_state_path = url_to_path(destination_url)?;
-        snapshot_state_path.push(SNAPSHOT_STATE_FILE);
-
-        // Create the snapshot state file
-        let mut snapshot_state_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(snapshot_state_path)
-            .map_err(|e| MigratableError::MigrateSend(e.into()))?;
-
-        // Serialize and write the snapshot state
-        let vm_state =
-            serde_json::to_vec(snapshot).map_err(|e| MigratableError::MigrateSend(e.into()))?;
-
-        snapshot_state_file
-            .write(&vm_state)
-            .map_err(|e| MigratableError::MigrateSend(e.into()))?;
-
-        // Tell the memory manager to also send/write its own snapshot.
-        if let Some(memory_manager_snapshot) = snapshot.snapshots.get(MEMORY_MANAGER_SNAPSHOT_ID) {
-            self.memory_manager
-                .lock()
-                .unwrap()
-                .send(&memory_manager_snapshot.clone(), destination_url)?;
-        } else {
-            return Err(MigratableError::Restore(anyhow!(
-                "Missing memory manager snapshot"
-            )));
-        }
-
-        Ok(())
-    }
-}
-
-impl Migratable for Vm {
-    fn start_dirty_log(&mut self) -> std::result::Result<(), MigratableError> {
-        self.memory_manager.lock().unwrap().start_dirty_log()?;
-        self.device_manager.lock().unwrap().start_dirty_log()
-    }
-
-    fn stop_dirty_log(&mut self) -> std::result::Result<(), MigratableError> {
-        self.memory_manager.lock().unwrap().stop_dirty_log()?;
-        self.device_manager.lock().unwrap().stop_dirty_log()
-    }
-
-    fn dirty_log(&mut self) -> std::result::Result<MemoryRangeTable, MigratableError> {
-        Ok(MemoryRangeTable::new_from_tables(vec![
-            self.memory_manager.lock().unwrap().dirty_log()?,
-            self.device_manager.lock().unwrap().dirty_log()?,
-        ]))
-    }
-
-    fn start_migration(&mut self) -> std::result::Result<(), MigratableError> {
-        self.memory_manager.lock().unwrap().start_migration()?;
-        self.device_manager.lock().unwrap().start_migration()
-    }
-
-    fn complete_migration(&mut self) -> std::result::Result<(), MigratableError> {
-        self.memory_manager.lock().unwrap().complete_migration()?;
-        self.device_manager.lock().unwrap().complete_migration()
-    }
-}
 
 #[cfg(feature = "guest_debug")]
 impl Debuggable for Vm {

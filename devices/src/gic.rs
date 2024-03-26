@@ -17,7 +17,6 @@ use vm_device::interrupt::{
     LegacyIrqSourceConfig, MsiIrqGroupConfig,
 };
 use vm_memory::address::Address;
-use vm_migration::{Migratable, MigratableError, Pausable, Snapshot, Snapshottable, Transportable};
 use vmm_sys_util::eventfd::EventFd;
 
 type Result<T> = result::Result<T, Error>;
@@ -150,31 +149,3 @@ impl InterruptController for Gic {
         self.interrupt_source_group.notifier(irq as InterruptIndex)
     }
 }
-
-impl Snapshottable for Gic {
-    fn id(&self) -> String {
-        GIC_SNAPSHOT_ID.to_string()
-    }
-
-    fn snapshot(&mut self) -> std::result::Result<Snapshot, MigratableError> {
-        let vgic = self.vgic.as_ref().unwrap().clone();
-        let state = vgic.lock().unwrap().state().unwrap();
-        Snapshot::new_from_state(&state)
-    }
-}
-
-impl Pausable for Gic {
-    fn pause(&mut self) -> std::result::Result<(), MigratableError> {
-        // Flush tables to guest RAM
-        let vgic = self.vgic.as_ref().unwrap().clone();
-        vgic.lock().unwrap().save_data_tables().map_err(|e| {
-            MigratableError::Pause(anyhow!(
-                "Could not save GICv3ITS GIC pending tables {:?}",
-                e
-            ))
-        })?;
-        Ok(())
-    }
-}
-impl Transportable for Gic {}
-impl Migratable for Gic {}

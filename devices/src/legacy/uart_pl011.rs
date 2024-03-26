@@ -16,9 +16,6 @@ use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
 use vm_device::interrupt::InterruptSourceGroup;
 use vm_device::BusDevice;
-use vm_migration::{
-    Migratable, MigratableError, Pausable, Snapshot, Snapshottable, Transportable, VersionMapped,
-};
 
 /* Registers */
 const UARTDR: u64 = 0;
@@ -112,8 +109,6 @@ pub struct Pl011State {
     read_count: u32,
     read_trigger: u32,
 }
-
-impl VersionMapped for Pl011State {}
 
 impl Pl011 {
     /// Constructs an AMBA PL011 UART device.
@@ -445,133 +440,5 @@ impl BusDevice for Pl011 {
         }
 
         None
-    }
-}
-
-impl Snapshottable for Pl011 {
-    fn id(&self) -> String {
-        self.id.clone()
-    }
-
-    fn snapshot(&mut self) -> std::result::Result<Snapshot, MigratableError> {
-        Snapshot::new_from_versioned_state(&self.state())
-    }
-}
-
-impl Pausable for Pl011 {}
-impl Transportable for Pl011 {}
-impl Migratable for Pl011 {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io;
-    use std::sync::{Arc, Mutex};
-    use vm_device::interrupt::{InterruptIndex, InterruptSourceConfig};
-    use vmm_sys_util::eventfd::EventFd;
-
-    const SERIAL_NAME: &str = "serial";
-
-    struct TestInterrupt {
-        event_fd: EventFd,
-    }
-
-    impl InterruptSourceGroup for TestInterrupt {
-        fn trigger(&self, _index: InterruptIndex) -> result::Result<(), std::io::Error> {
-            self.event_fd.write(1)
-        }
-        fn update(
-            &self,
-            _index: InterruptIndex,
-            _config: InterruptSourceConfig,
-            _masked: bool,
-            _set_gsi: bool,
-        ) -> result::Result<(), std::io::Error> {
-            Ok(())
-        }
-        fn set_gsi(&self) -> result::Result<(), std::io::Error> {
-            Ok(())
-        }
-        fn notifier(&self, _index: InterruptIndex) -> Option<EventFd> {
-            Some(self.event_fd.try_clone().unwrap())
-        }
-    }
-
-    impl TestInterrupt {
-        fn new(event_fd: EventFd) -> Self {
-            TestInterrupt { event_fd }
-        }
-    }
-
-    #[derive(Clone)]
-    struct SharedBuffer {
-        buf: Arc<Mutex<Vec<u8>>>,
-    }
-
-    impl SharedBuffer {
-        fn new() -> SharedBuffer {
-            SharedBuffer {
-                buf: Arc::new(Mutex::new(Vec::new())),
-            }
-        }
-    }
-
-    impl io::Write for SharedBuffer {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.buf.lock().unwrap().write(buf)
-        }
-        fn flush(&mut self) -> io::Result<()> {
-            self.buf.lock().unwrap().flush()
-        }
-    }
-
-    #[test]
-    fn pl011_output() {
-        let intr_evt = EventFd::new(0).unwrap();
-        let pl011_out = SharedBuffer::new();
-        let mut pl011 = Pl011::new(
-            String::from(SERIAL_NAME),
-            Arc::new(TestInterrupt::new(intr_evt.try_clone().unwrap())),
-            Some(Box::new(pl011_out.clone())),
-            Instant::now(),
-            None,
-        );
-
-        pl011.write(0, UARTDR, &[b'x', b'y']);
-        pl011.write(0, UARTDR, &[b'a']);
-        pl011.write(0, UARTDR, &[b'b']);
-        pl011.write(0, UARTDR, &[b'c']);
-        assert_eq!(
-            pl011_out.buf.lock().unwrap().as_slice(),
-            &[b'x', b'a', b'b', b'c']
-        );
-    }
-
-    #[test]
-    fn pl011_input() {
-        let intr_evt = EventFd::new(0).unwrap();
-        let pl011_out = SharedBuffer::new();
-        let mut pl011 = Pl011::new(
-            String::from(SERIAL_NAME),
-            Arc::new(TestInterrupt::new(intr_evt.try_clone().unwrap())),
-            Some(Box::new(pl011_out)),
-            Instant::now(),
-            None,
-        );
-
-        // write 1 to the interrupt event fd, so that read doesn't block in case the event fd
-        // counter doesn't change (for 0 it blocks)
-        assert!(intr_evt.write(1).is_ok());
-        pl011.queue_input_bytes(&[b'a', b'b', b'c']).unwrap();
-
-        assert_eq!(intr_evt.read().unwrap(), 2);
-
-        let mut data = [0u8];
-        pl011.read(0, UARTDR, &mut data);
-        assert_eq!(data[0], b'a');
-        pl011.read(0, UARTDR, &mut data);
-        assert_eq!(data[0], b'b');
-        pl011.read(0, UARTDR, &mut data);
-        assert_eq!(data[0], b'c');
     }
 }
