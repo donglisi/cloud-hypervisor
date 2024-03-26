@@ -341,6 +341,7 @@ pub(crate) struct AddressManager {
     #[cfg(target_arch = "x86_64")]
     pub(crate) io_bus: Arc<Bus>,
     pub(crate) mmio_bus: Arc<Bus>,
+    #[cfg(target_arch = "aarch64")]
     pub(crate) vm: Arc<dyn hypervisor::Vm>,
 }
 
@@ -482,6 +483,7 @@ impl DeviceManager {
             #[cfg(target_arch = "x86_64")]
             io_bus,
             mmio_bus,
+            #[cfg(target_arch = "aarch64")]
             vm: vm.clone(),
         });
 
