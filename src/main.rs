@@ -42,10 +42,6 @@ enum Error {
     VmCreate(vmm::api::ApiError),
     #[error("Error booting VM: {0:?}")]
     VmBoot(vmm::api::ApiError),
-    #[error("Error restoring VM: {0:?}")]
-    VmRestore(vmm::api::ApiError),
-    #[error("Error parsing restore: {0}")]
-    ParsingRestore(vmm::config::Error),
     #[error("Failed to join on VMM thread: {0:?}")]
     ThreadJoin(std::boxed::Box<dyn std::any::Any + std::marker::Send>),
     #[error("VMM thread exited with error: {0}")]

@@ -451,8 +451,6 @@ pub struct DeviceManager {
 
     // Start time of the VM
     timestamp: Instant,
-
-    snapshot: Option<Snapshot>,
 }
 
 impl DeviceManager {
@@ -554,7 +552,6 @@ impl DeviceManager {
             debug_console_pty: None,
             original_termios_opt: Arc::new(Mutex::new(None)),
             timestamp,
-            snapshot,
         };
 
         let device_manager = Arc::new(Mutex::new(device_manager));
@@ -651,13 +648,6 @@ impl DeviceManager {
         self.legacy_interrupt_manager = Some(legacy_interrupt_manager);
 
         Ok(())
-    }
-
-    fn state(&self) -> DeviceManagerState {
-        DeviceManagerState {
-            device_tree: self.device_tree.lock().unwrap().clone(),
-            device_id_cnt: self.device_id_cnt,
-        }
     }
 
     #[cfg(target_arch = "aarch64")]
