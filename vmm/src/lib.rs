@@ -14,8 +14,6 @@ use crate::config::{
 };
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::coredump::GuestDebuggable;
-#[cfg(all(feature = "kvm", target_arch = "x86_64"))]
-use crate::migration::get_vm_snapshot;
 use crate::vm::{Error as VmError, Vm, VmState};
 #[cfg(feature = "dbus_api")]
 use api::dbus::{DBusApiOptions, DBusApiShutdownChannels};
@@ -522,48 +520,6 @@ impl Vmm {
             signals: None,
             threads: vec![],
             original_termios_opt: Arc::new(Mutex::new(None)),
-        })
-    }
-
-    #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
-    fn vm_check_cpuid_compatibility(
-        &self,
-        src_vm_config: &Arc<Mutex<VmConfig>>,
-        src_vm_cpuid: &[hypervisor::arch::x86::CpuIdEntry],
-    ) -> result::Result<(), MigratableError> {
-        #[cfg(feature = "tdx")]
-        if src_vm_config.lock().unwrap().is_tdx_enabled() {
-            return Err(MigratableError::MigrateReceive(anyhow!(
-                "Live Migration is not supported when TDX is enabled"
-            )));
-        };
-
-        // We check the `CPUID` compatibility of between the source vm and destination, which is
-        // mostly about feature compatibility and "topology/sgx" leaves are not relevant.
-        let dest_cpuid = &{
-            let vm_config = &src_vm_config.lock().unwrap();
-
-            let phys_bits = vm::physical_bits(&self.hypervisor, vm_config.cpus.max_phys_bits);
-            arch::generate_common_cpuid(
-                &self.hypervisor.clone(),
-                &arch::CpuidConfig {
-                    sgx_epc_sections: None,
-                    phys_bits,
-                    kvm_hyperv: vm_config.cpus.kvm_hyperv,
-                    #[cfg(feature = "tdx")]
-                    tdx: false,
-                    amx: vm_config.cpus.features.amx,
-                },
-            )
-            .map_err(|e| {
-                MigratableError::MigrateReceive(anyhow!("Error generating common cpuid: {:?}", e))
-            })?
-        };
-        arch::CpuidFeatureEntry::check_cpuid_compatibility(src_vm_cpuid, dest_cpuid).map_err(|e| {
-            MigratableError::MigrateReceive(anyhow!(
-                "Error checking cpu feature compatibility': {:?}",
-                e
-            ))
         })
     }
 

@@ -27,8 +27,6 @@ use arch::layout;
 use arch::layout::{APIC_START, IOAPIC_SIZE, IOAPIC_START};
 #[cfg(target_arch = "aarch64")]
 use arch::{DeviceType, MmioDeviceInfo};
-#[cfg(target_arch = "x86_64")]
-use devices::debug_console::DebugConsole;
 #[cfg(target_arch = "aarch64")]
 use devices::gic;
 #[cfg(target_arch = "x86_64")]
@@ -67,7 +65,7 @@ use vm_migration::{
 };
 use vmm_sys_util::eventfd::EventFd;
 #[cfg(target_arch = "x86_64")]
-use {devices::debug_console, devices::legacy::Serial};
+use {devices::legacy::Serial};
 
 #[cfg(target_arch = "aarch64")]
 const MMIO_LEN: u64 = 0x1000;
@@ -690,8 +688,6 @@ impl DeviceManager {
                 id.clone(),
                 APIC_START,
                 Arc::clone(&self.msi_interrupt_manager),
-                versioned_state_from_id(self.snapshot.as_ref(), id.as_str())
-                    .map_err(DeviceManagerError::RestoreGetState)?,
             )
             .map_err(DeviceManagerError::CreateInterruptController)?,
         ));
@@ -878,53 +874,6 @@ impl DeviceManager {
     }
 
     #[cfg(target_arch = "x86_64")]
-    fn add_debug_console_device(
-        &mut self,
-        debug_console_writer: Box<dyn io::Write + Send>,
-    ) -> DeviceManagerResult<Arc<Mutex<DebugConsole>>> {
-        let id = String::from(DEBUGCON_DEVICE_NAME);
-        let debug_console = Arc::new(Mutex::new(DebugConsole::new(
-            id.clone(),
-            debug_console_writer,
-        )));
-
-        let port = self
-            .config
-            .lock()
-            .unwrap()
-            .debug_console
-            .clone()
-            .iobase
-            .map(|port| port as u64)
-            .unwrap_or(debug_console::DEFAULT_PORT);
-
-        self.bus_devices
-            .push(Arc::clone(&debug_console) as Arc<Mutex<dyn BusDevice>>);
-
-        self.address_manager
-            .allocator
-            .lock()
-            .unwrap()
-            .allocate_io_addresses(Some(GuestAddress(port)), 0x1, None)
-            .ok_or(DeviceManagerError::AllocateIoPort)?;
-
-        self.address_manager
-            .io_bus
-            .insert(debug_console.clone(), port, 0x1)
-            .map_err(DeviceManagerError::BusError)?;
-
-        // Fill the device tree with a new node. In case of restore, we
-        // know there is nothing to do, so we can simply override the
-        // existing entry.
-        self.device_tree
-            .lock()
-            .unwrap()
-            .insert(id.clone(), device_node!(id, debug_console));
-
-        Ok(debug_console)
-    }
-
-    #[cfg(target_arch = "x86_64")]
     fn add_serial_device(
         &mut self,
         interrupt_manager: &Arc<dyn InterruptManager<GroupConfig = LegacyIrqGroupConfig>>,
@@ -945,8 +894,6 @@ impl DeviceManager {
             id.clone(),
             interrupt_group,
             serial_writer,
-            versioned_state_from_id(self.snapshot.as_ref(), id.as_str())
-                .map_err(DeviceManagerError::RestoreGetState)?,
         )));
 
         self.bus_devices
@@ -1142,44 +1089,6 @@ impl DeviceManager {
                 }
                 _ => None,
             };
-        }
-
-        #[cfg(target_arch = "x86_64")]
-        {
-            let debug_console_config = self.config.lock().unwrap().debug_console.clone();
-            let debug_console_writer: Option<Box<dyn io::Write + Send>> = match debug_console_config
-                .mode
-            {
-                ConsoleOutputMode::File => Some(Box::new(
-                    File::create(debug_console_config.file.as_ref().unwrap())
-                        .map_err(DeviceManagerError::DebugconOutputFileOpen)?,
-                )),
-                ConsoleOutputMode::Pty => {
-                    if let Some(pty) = debug_console_pty {
-                        self.config.lock().unwrap().debug_console.file = Some(pty.path.clone());
-                        self.debug_console_pty = Some(Arc::new(Mutex::new(pty)));
-                    } else {
-                        let (main, sub, path) =
-                            create_pty().map_err(DeviceManagerError::DebugconPtyOpen)?;
-                        self.set_raw_mode(&sub)
-                            .map_err(DeviceManagerError::SetPtyRaw)?;
-                        self.config.lock().unwrap().debug_console.file = Some(path.clone());
-                        self.debug_console_pty = Some(Arc::new(Mutex::new(PtyPair { main, path })));
-                    }
-                    None
-                }
-                ConsoleOutputMode::Tty => {
-                    let out = stdout();
-                    let _ = self.set_raw_mode(&out);
-                    Some(Box::new(out))
-                }
-                ConsoleOutputMode::Off | ConsoleOutputMode::Null | ConsoleOutputMode::Socket => {
-                    None
-                }
-            };
-            if let Some(writer) = debug_console_writer {
-                let _ = self.add_debug_console_device(writer)?;
-            }
         }
 
         Ok(Arc::new(Console {}))

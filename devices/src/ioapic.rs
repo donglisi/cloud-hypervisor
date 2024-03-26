@@ -21,9 +21,6 @@ use vm_device::interrupt::{
 };
 use vm_device::BusDevice;
 use vm_memory::GuestAddress;
-use vm_migration::{
-    Migratable, MigratableError, Pausable, Snapshot, Snapshottable, Transportable, VersionMapped,
-};
 use vmm_sys_util::eventfd::EventFd;
 
 type Result<T> = result::Result<T, Error>;
@@ -144,7 +141,6 @@ pub struct IoapicState {
     used_entries: [bool; NUM_IOAPIC_PINS],
     apic_address: u64,
 }
-impl VersionMapped for IoapicState {}
 
 impl BusDevice for Ioapic {
     fn read(&mut self, _base: u64, offset: u64, data: &mut [u8]) {
@@ -193,7 +189,6 @@ impl Ioapic {
         id: String,
         apic_address: GuestAddress,
         interrupt_manager: Arc<dyn InterruptManager<GroupConfig = MsiIrqGroupConfig>>,
-        state: Option<IoapicState>,
     ) -> Result<Ioapic> {
         let interrupt_source_group = interrupt_manager
             .create_group(MsiIrqGroupConfig {
@@ -202,16 +197,7 @@ impl Ioapic {
             })
             .map_err(Error::CreateInterruptSourceGroup)?;
 
-        let (id_reg, reg_sel, reg_entries, used_entries, apic_address) = if let Some(state) = &state
-        {
-            (
-                state.id_reg,
-                state.reg_sel,
-                state.reg_entries,
-                state.used_entries,
-                GuestAddress(state.apic_address),
-            )
-        } else {
+        let (id_reg, reg_sel, reg_entries, used_entries, apic_address) = {
             (
                 0,
                 0,
@@ -232,20 +218,6 @@ impl Ioapic {
             apic_address,
             interrupt_source_group,
         };
-
-        // When restoring the Ioapic, we must enable used entries.
-        if state.is_some() {
-            for (irq, entry) in ioapic.used_entries.iter().enumerate() {
-                if *entry {
-                    ioapic.update_entry(irq, false)?;
-                }
-            }
-
-            ioapic
-                .interrupt_source_group
-                .set_gsi()
-                .map_err(Error::UpdateInterrupt)?;
-        }
 
         Ok(ioapic)
     }
@@ -437,17 +409,3 @@ impl InterruptController for Ioapic {
         self.interrupt_source_group.notifier(irq as InterruptIndex)
     }
 }
-
-impl Snapshottable for Ioapic {
-    fn id(&self) -> String {
-        self.id.clone()
-    }
-
-    fn snapshot(&mut self) -> std::result::Result<Snapshot, MigratableError> {
-        Snapshot::new_from_versioned_state(&self.state())
-    }
-}
-
-impl Pausable for Ioapic {}
-impl Transportable for Ioapic {}
-impl Migratable for Ioapic {}

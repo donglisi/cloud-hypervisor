@@ -1771,10 +1771,6 @@ impl VmConfig {
         if self.serial.mode == ConsoleOutputMode::Tty {
             tty_consoles.push("serial-console");
         };
-        #[cfg(target_arch = "x86_64")]
-        if self.debug_console.mode == ConsoleOutputMode::Tty {
-            tty_consoles.push("debug-console");
-        };
         if tty_consoles.len() > 1 {
             warn!("Using TTY output for multiple consoles: {:?}", tty_consoles);
         }
@@ -2150,8 +2146,6 @@ impl VmConfig {
             pmem,
             serial,
             console,
-            #[cfg(target_arch = "x86_64")]
-            debug_console,
             devices,
             user_devices,
             vdpa,
@@ -2267,8 +2261,6 @@ impl Clone for VmConfig {
             pmem: self.pmem.clone(),
             serial: self.serial.clone(),
             console: self.console.clone(),
-            #[cfg(target_arch = "x86_64")]
-            debug_console: self.debug_console.clone(),
             devices: self.devices.clone(),
             user_devices: self.user_devices.clone(),
             vdpa: self.vdpa.clone(),

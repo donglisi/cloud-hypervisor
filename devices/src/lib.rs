@@ -13,8 +13,6 @@ extern crate bitflags;
 extern crate log;
 
 pub mod acpi;
-#[cfg(target_arch = "x86_64")]
-pub mod debug_console;
 #[cfg(target_arch = "aarch64")]
 pub mod gic;
 pub mod interrupt_controller;

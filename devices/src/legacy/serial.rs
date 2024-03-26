@@ -89,7 +89,6 @@ impl Serial {
         id: String,
         interrupt: Arc<dyn InterruptSourceGroup>,
         out: Option<Box<dyn io::Write + Send>>,
-        state: Option<SerialState>,
     ) -> Serial {
         let (
             interrupt_enable,
@@ -101,19 +100,7 @@ impl Serial {
             scratch,
             baud_divisor,
             in_buffer,
-        ) = if let Some(state) = state {
-            (
-                state.interrupt_enable,
-                state.interrupt_identification,
-                state.line_control,
-                state.line_status,
-                state.modem_control,
-                state.modem_status,
-                state.scratch,
-                state.baud_divisor,
-                state.in_buffer.into(),
-            )
-        } else {
+        ) = {
             (
                 0,
                 DEFAULT_INTERRUPT_IDENTIFICATION,
@@ -148,18 +135,16 @@ impl Serial {
         id: String,
         interrupt: Arc<dyn InterruptSourceGroup>,
         out: Box<dyn io::Write + Send>,
-        state: Option<SerialState>,
     ) -> Serial {
-        Self::new(id, interrupt, Some(out), state)
+        Self::new(id, interrupt, Some(out))
     }
 
     /// Constructs a Serial port with no connected output.
     pub fn new_sink(
         id: String,
         interrupt: Arc<dyn InterruptSourceGroup>,
-        state: Option<SerialState>,
     ) -> Serial {
-        Self::new(id, interrupt, None, state)
+        Self::new(id, interrupt, None)
     }
 
     pub fn set_out(&mut self, out: Option<Box<dyn io::Write + Send>>) {
