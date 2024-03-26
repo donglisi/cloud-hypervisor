@@ -859,14 +859,7 @@ impl DeviceManager {
     }
 
     #[cfg(target_arch = "x86_64")]
-    fn add_legacy_devices(&mut self, reset_evt: EventFd) -> DeviceManagerResult<()> {
-        let vcpus_kill_signalled = self
-            .cpu_manager
-            .lock()
-            .unwrap()
-            .vcpus_kill_signalled()
-            .clone();
-
+    fn add_legacy_devices(&mut self, _reset_evt: EventFd) -> DeviceManagerResult<()> {
         // 0x80 debug port
         let debug_port = Arc::new(Mutex::new(devices::legacy::DebugPort::new(self.timestamp)));
         self.bus_devices
