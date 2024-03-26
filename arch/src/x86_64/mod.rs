@@ -26,7 +26,6 @@ use vm_memory::{
     Address, Bytes, GuestAddress, GuestAddressSpace, GuestMemory, GuestMemoryAtomic,
     GuestMemoryRegion, GuestUsize,
 };
-mod smbios;
 use std::arch::x86_64;
 #[cfg(feature = "tdx")]
 pub mod tdx;
@@ -146,9 +145,6 @@ pub enum Error {
 
     /// Cannot set the local interruption due to bad configuration.
     LocalIntConfiguration(anyhow::Error),
-
-    /// Error setting up SMBIOS table
-    SmbiosSetup(smbios::Error),
 
     /// Could not find any SGX EPC section
     NoSgxEpcSection,
@@ -895,9 +891,6 @@ pub fn configure_system(
     initramfs: &Option<InitramfsConfig>,
     _num_cpus: u8,
     sgx_epc_region: Option<SgxEpcRegion>,
-    serial_number: Option<&str>,
-    uuid: Option<&str>,
-    oem_strings: Option<&[&str]>,
     topology: Option<(u8, u8, u8)>,
 ) -> super::Result<()> {
     // Write EBDA address to location where ACPICA expects to find it
@@ -905,11 +898,7 @@ pub fn configure_system(
         .write_obj((layout::EBDA_START.0 >> 4) as u16, layout::EBDA_POINTER)
         .map_err(Error::EbdaSetup)?;
 
-    let size = smbios::setup_smbios(guest_mem, serial_number, uuid, oem_strings)
-        .map_err(Error::SmbiosSetup)?;
-
-    // Place the MP table after the SMIOS table aligned to 16 bytes
-    let offset = GuestAddress(layout::SMBIOS_START).unchecked_add(size);
+    let offset = GuestAddress(layout::SMBIOS_START);
     let offset = GuestAddress((offset.0 + 16) & !0xf);
     mptable::setup_mptable(offset, guest_mem, _num_cpus, topology).map_err(Error::MpTableSetup)?;
 
