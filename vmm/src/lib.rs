@@ -661,7 +661,6 @@ impl RequestHandler for Vmm {
                         vm_debug_evt,
                         self.hypervisor.clone(),
                         None,
-                        None,
                         Arc::clone(&self.original_termios_opt),
                         None,
                         None,
@@ -701,16 +700,14 @@ impl RequestHandler for Vmm {
 
     fn vm_reboot(&mut self) -> result::Result<(), VmError> {
         // First we stop the current VM
-        let (config, serial_pty, debug_console_pty) =
+        let (config, serial_pty) =
             if let Some(mut vm) = self.vm.take() {
                 let config = vm.get_config();
                 let serial_pty = vm.serial_pty();
-                let debug_console_pty = vm.debug_console_pty();
                 vm.shutdown()?;
                 (
                     config,
                     serial_pty,
-                    debug_console_pty,
                 )
             } else {
                 return Err(VmError::VmNotCreated);
@@ -740,7 +737,6 @@ impl RequestHandler for Vmm {
             debug_evt,
             self.hypervisor.clone(),
             serial_pty,
-            debug_console_pty,
             Arc::clone(&self.original_termios_opt),
             None,
             None,

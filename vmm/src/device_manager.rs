@@ -383,9 +383,6 @@ pub struct DeviceManager {
     // serial PTY
     serial_pty: Option<Arc<Mutex<PtyPair>>>,
 
-    // debug-console PTY
-    debug_console_pty: Option<Arc<Mutex<PtyPair>>>,
-
     // Serial Manager
     serial_manager: Option<Arc<SerialManager>>,
 
@@ -546,7 +543,6 @@ impl DeviceManager {
             selected_segment: 0,
             serial_pty: None,
             serial_manager: None,
-            debug_console_pty: None,
             original_termios_opt: Arc::new(Mutex::new(None)),
             timestamp,
         };
@@ -571,16 +567,9 @@ impl DeviceManager {
             .map(|pty| pty.lock().unwrap().clone())
     }
 
-    pub fn debug_console_pty(&self) -> Option<PtyPair> {
-        self.debug_console_pty
-            .as_ref()
-            .map(|pty| pty.lock().unwrap().clone())
-    }
-
     pub fn create_devices(
         &mut self,
         serial_pty: Option<PtyPair>,
-        debug_console_pty: Option<PtyPair>,
         original_termios_opt: Arc<Mutex<Option<termios>>>,
     ) -> DeviceManagerResult<()> {
 
@@ -639,7 +628,6 @@ impl DeviceManager {
         self.console = self.add_console_devices(
             &legacy_interrupt_manager,
             serial_pty,
-            debug_console_pty,
         )?;
 
         self.legacy_interrupt_manager = Some(legacy_interrupt_manager);
@@ -1033,7 +1021,6 @@ impl DeviceManager {
         &mut self,
         interrupt_manager: &Arc<dyn InterruptManager<GroupConfig = LegacyIrqGroupConfig>>,
         serial_pty: Option<PtyPair>,
-        #[cfg(target_arch = "x86_64")] debug_console_pty: Option<PtyPair>,
         #[cfg(not(target_arch = "x86_64"))] _: Option<PtyPair>,
     ) -> DeviceManagerResult<Arc<Console>> {
         let serial_config = self.config.lock().unwrap().serial.clone();

@@ -2039,8 +2039,6 @@ impl VmConfig {
 
         let console = ConsoleConfig::parse(vm_params.console)?;
         let serial = ConsoleConfig::parse(vm_params.serial)?;
-        #[cfg(target_arch = "x86_64")]
-        let debug_console = DebugConsoleConfig::parse(vm_params.debug_console)?;
 
         let mut devices: Option<Vec<DeviceConfig>> = None;
         if let Some(device_list) = &vm_params.devices {

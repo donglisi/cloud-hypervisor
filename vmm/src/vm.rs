@@ -465,7 +465,6 @@ impl Vm {
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
         timestamp: Instant,
         serial_pty: Option<PtyPair>,
-        debug_console_pty: Option<PtyPair>,
         original_termios: Arc<Mutex<Option<termios>>>,
         snapshot: Option<Snapshot>,
     ) -> Result<Self> {
@@ -596,7 +595,6 @@ impl Vm {
             .unwrap()
             .create_devices(
                 serial_pty,
-                debug_console_pty,
                 original_termios,
             )
             .map_err(Error::DeviceManager)?;
@@ -663,7 +661,6 @@ impl Vm {
         #[cfg(feature = "guest_debug")] vm_debug_evt: EventFd,
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
         serial_pty: Option<PtyPair>,
-        debug_console_pty: Option<PtyPair>,
         original_termios: Arc<Mutex<Option<termios>>>,
         snapshot: Option<Snapshot>,
         source_url: Option<&str>,
@@ -737,7 +734,6 @@ impl Vm {
             hypervisor,
             timestamp,
             serial_pty,
-            debug_console_pty,
             original_termios,
             snapshot,
         )
@@ -1137,10 +1133,6 @@ impl Vm {
 
     pub fn serial_pty(&self) -> Option<PtyPair> {
         self.device_manager.lock().unwrap().serial_pty()
-    }
-
-    pub fn debug_console_pty(&self) -> Option<PtyPair> {
-        self.device_manager.lock().unwrap().debug_console_pty()
     }
 
     pub fn shutdown(&mut self) -> Result<()> {
