@@ -61,7 +61,7 @@ use vm_device::{Bus, BusDevice};
 use vm_memory::Address;
 use vm_memory::GuestAddress;
 use vm_migration::{
-    MigratableError, Snapshot,
+    MigratableError
 };
 use vmm_sys_util::eventfd::EventFd;
 #[cfg(target_arch = "x86_64")]
@@ -347,7 +347,6 @@ pub(crate) struct AddressManager {
 #[derive(Serialize, Deserialize)]
 struct DeviceManagerState {
     device_tree: DeviceTree,
-    device_id_cnt: Wrapping<usize>,
 }
 
 #[derive(Debug)]
@@ -417,9 +416,6 @@ pub struct DeviceManager {
     // which prevents cyclic dependencies.
     bus_devices: Vec<Arc<Mutex<dyn BusDevice>>>,
 
-    // Counter to keep track of the consumed device IDs.
-    device_id_cnt: Wrapping<usize>,
-
     #[cfg_attr(target_arch = "aarch64", allow(dead_code))]
     // MSI Interrupt Manager
     msi_interrupt_manager: Arc<dyn InterruptManager<GroupConfig = MsiIrqGroupConfig>>,
@@ -459,18 +455,9 @@ impl DeviceManager {
         exit_evt: EventFd,
         reset_evt: EventFd,
         timestamp: Instant,
-        snapshot: Option<Snapshot>,
         dynamic: bool,
     ) -> DeviceManagerResult<Arc<Mutex<Self>>> {
-        let (device_tree, device_id_cnt) = if let Some(snapshot) = snapshot.as_ref() {
-            let state: DeviceManagerState = snapshot.to_state().unwrap();
-            (
-                Arc::new(Mutex::new(state.device_tree.clone())),
-                state.device_id_cnt,
-            )
-        } else {
-            (Arc::new(Mutex::new(DeviceTree::new())), Wrapping(0))
-        };
+        let device_tree = Arc::new(Mutex::new(DeviceTree::new()));
 
         let address_manager = Arc::new(AddressManager {
             allocator: memory_manager.lock().unwrap().allocator(),
@@ -531,7 +518,6 @@ impl DeviceManager {
             memory_manager,
             cpu_manager,
             bus_devices: Vec::new(),
-            device_id_cnt,
             msi_interrupt_manager,
             legacy_interrupt_manager: None,
             device_tree,

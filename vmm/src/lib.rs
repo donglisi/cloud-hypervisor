@@ -835,7 +835,6 @@ impl RequestHandler for Vmm {
 
 const CPU_MANAGER_SNAPSHOT_ID: &str = "cpu-manager";
 const MEMORY_MANAGER_SNAPSHOT_ID: &str = "memory-manager";
-const DEVICE_MANAGER_SNAPSHOT_ID: &str = "device-manager";
 
 #[cfg(test)]
 mod unit_tests {

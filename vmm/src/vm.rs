@@ -35,7 +35,7 @@ use crate::migration::get_vm_snapshot;
 use crate::migration::url_to_file;
 use crate::GuestMemoryMmap;
 use crate::{
-    CPU_MANAGER_SNAPSHOT_ID, DEVICE_MANAGER_SNAPSHOT_ID, MEMORY_MANAGER_SNAPSHOT_ID,
+    CPU_MANAGER_SNAPSHOT_ID, MEMORY_MANAGER_SNAPSHOT_ID,
 };
 use anyhow::anyhow;
 use arch::get_host_cpu_phys_bits;
@@ -585,7 +585,6 @@ impl Vm {
             exit_evt.try_clone().map_err(Error::EventFdClone)?,
             reset_evt,
             timestamp,
-            snapshot_from_id(snapshot.as_ref(), DEVICE_MANAGER_SNAPSHOT_ID),
             dynamic,
         )
         .map_err(Error::DeviceManager)?;
