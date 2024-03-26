@@ -9,7 +9,6 @@ use crate::config::{MemoryConfig, MemoryZoneConfig};
 use crate::coredump::{
     CoredumpMemoryRegion, CoredumpMemoryRegions, DumpState, GuestDebuggableError,
 };
-use crate::migration::url_to_path;
 use crate::{GuestMemoryMmap, GuestRegionMmap};
 use acpi_tables::{aml, Aml};
 use anyhow::anyhow;
@@ -34,7 +33,6 @@ use std::ops::{BitAnd, Deref, Not, Sub};
 use std::os::fd::AsFd;
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::path::PathBuf;
-use std::result;
 use std::sync::{Arc, Barrier, Mutex};
 use std::{ffi, thread};
 use versionize::{VersionMap, Versionize, VersionizeResult};
@@ -51,7 +49,7 @@ use vm_memory::{
     ReadVolatile,
 };
 use vm_migration::{
-    protocol::MemoryRange, protocol::MemoryRangeTable, Migratable, MigratableError,
+    protocol::MemoryRange, protocol::MemoryRangeTable, MigratableError,
 };
 
 pub const MEMORY_MANAGER_ACPI_SIZE: usize = 0x18;
@@ -782,8 +780,6 @@ impl MemoryManager {
 
         let (
             start_of_device_area,
-            boot_ram,
-            current_ram,
             arch_mem_regions,
             memory_zones,
             guest_memory,
@@ -826,8 +822,6 @@ impl MemoryManager {
 
             (
                 start_of_device_area,
-                ram_size,
-                ram_size,
                 arch_mem_regions,
                 memory_zones,
                 guest_memory,
