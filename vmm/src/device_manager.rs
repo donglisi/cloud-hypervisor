@@ -915,7 +915,6 @@ impl DeviceManager {
             .map_err(DeviceManagerError::CreateInterruptGroup)?;
 
         let serial = Arc::new(Mutex::new(devices::legacy::Pl011::new(
-            id.clone(),
             interrupt_group,
             serial_writer,
             self.timestamp,

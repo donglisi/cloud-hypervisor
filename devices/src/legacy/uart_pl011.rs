@@ -70,7 +70,6 @@ type Result<T> = result::Result<T, Error>;
 
 /// A PL011 device following the PL011 specification.
 pub struct Pl011 {
-    id: String,
     flags: u32,
     lcr: u32,
     rsr: u32,
@@ -113,7 +112,6 @@ pub struct Pl011State {
 impl Pl011 {
     /// Constructs an AMBA PL011 UART device.
     pub fn new(
-        id: String,
         irq: Arc<dyn InterruptSourceGroup>,
         out: Option<Box<dyn io::Write + Send>>,
         timestamp: Instant,
@@ -174,7 +172,6 @@ impl Pl011 {
         };
 
         Self {
-            id,
             flags,
             lcr,
             rsr,
