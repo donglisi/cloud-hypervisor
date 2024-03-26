@@ -775,7 +775,7 @@ impl MemoryManager {
             GuestAddress(mmio_address_space_size - PLATFORM_DEVICE_AREA_SIZE);
         let end_of_device_area = start_of_platform_device_area.unchecked_sub(1);
 
-        let (ram_size, zones, allow_mem_hotplug) =
+        let (_ram_size, zones, allow_mem_hotplug) =
             Self::validate_memory_config(config, user_provided_zones)?;
 
         let (
