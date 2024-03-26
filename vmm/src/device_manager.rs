@@ -60,8 +60,6 @@ use vm_device::interrupt::{
 };
 use vm_device::{Bus, BusDevice};
 use vm_memory::{Address, GuestAddress};
-#[cfg(target_arch = "x86_64")]
-use vm_memory::{GuestAddressSpace, GuestMemory};
 use vm_migration::{
     protocol::MemoryRangeTable, snapshot_from_id, versioned_state_from_id, Migratable,
     MigratableError, Pausable, Snapshot, SnapshotData, Snapshottable, Transportable,
