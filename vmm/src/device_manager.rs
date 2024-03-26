@@ -63,8 +63,7 @@ use vm_device::{Bus, BusDevice};
 use vm_memory::Address;
 use vm_memory::GuestAddress;
 use vm_migration::{
-    protocol::MemoryRangeTable, versioned_state_from_id, Migratable,
-    MigratableError, Pausable, Snapshot, SnapshotData, Snapshottable, Transportable,
+    MigratableError, Snapshot,
 };
 use vmm_sys_util::eventfd::EventFd;
 #[cfg(target_arch = "x86_64")]

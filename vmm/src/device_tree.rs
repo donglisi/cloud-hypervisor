@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use vm_device::Resource;
-use vm_migration::Migratable;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DeviceNode {

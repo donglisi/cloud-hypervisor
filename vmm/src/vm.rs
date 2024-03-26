@@ -33,7 +33,6 @@ use crate::memory_manager::{
 use crate::migration::get_vm_snapshot;
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::migration::url_to_file;
-use crate::migration::{url_to_path, SNAPSHOT_CONFIG_FILE, SNAPSHOT_STATE_FILE};
 use crate::GuestMemoryMmap;
 use crate::{
     CPU_MANAGER_SNAPSHOT_ID, DEVICE_MANAGER_SNAPSHOT_ID, MEMORY_MANAGER_SNAPSHOT_ID,
@@ -65,8 +64,8 @@ use serde::{Deserialize, Serialize};
 use std::cmp;
 use std::collections::HashMap;
 use std::convert::TryInto;
-use std::fs::{File, OpenOptions};
-use std::io::{self, Seek, SeekFrom, Write};
+use std::fs::File;
+use std::io::{self, Seek, SeekFrom};
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use std::mem::size_of;
 use std::num::Wrapping;
@@ -84,8 +83,7 @@ use vm_memory::{
 };
 use vm_migration::protocol::{Request, Response, Status};
 use vm_migration::{
-    protocol::MemoryRangeTable, snapshot_from_id, Migratable, MigratableError, Pausable, Snapshot,
-    SnapshotData, Snapshottable, Transportable,
+    protocol::MemoryRangeTable, snapshot_from_id, MigratableError, Snapshot,
 };
 use vmm_sys_util::eventfd::EventFd;
 use vmm_sys_util::sock_ctrl_msg::ScmSocket;
