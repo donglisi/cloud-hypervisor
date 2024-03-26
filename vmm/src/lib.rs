@@ -18,7 +18,6 @@ use crate::vm::{Error as VmError, Vm, VmState};
 #[cfg(feature = "dbus_api")]
 use api::dbus::{DBusApiOptions, DBusApiShutdownChannels};
 use libc::{tcsetattr, termios, EFD_NONBLOCK, SIGINT, SIGTERM, TCSANOW};
-use memory_manager::MemoryManagerSnapshotData;
 use serde::{Deserialize, Serialize};
 use signal_hook::iterator::{Handle, Signals};
 use std::fs::File;
@@ -369,7 +368,6 @@ struct VmMigrationConfig {
     vm_config: Arc<Mutex<VmConfig>>,
     #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
     common_cpuid: Vec<hypervisor::arch::x86::CpuIdEntry>,
-    memory_manager_data: MemoryManagerSnapshotData,
 }
 
 #[derive(Debug, Clone)]

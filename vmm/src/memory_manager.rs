@@ -52,8 +52,7 @@ use vm_memory::{
     ReadVolatile,
 };
 use vm_migration::{
-    protocol::MemoryRange, protocol::MemoryRangeTable, Migratable, MigratableError, Pausable,
-    Snapshot, SnapshotData, Snapshottable, Transportable, VersionMapped,
+    protocol::MemoryRange, protocol::MemoryRangeTable, Migratable, MigratableError,
 };
 
 pub const MEMORY_MANAGER_ACPI_SIZE: usize = 0x18;
@@ -604,92 +603,6 @@ impl MemoryManager {
         Ok((mem_regions, memory_zones))
     }
 
-    // Restore both GuestMemory regions along with MemoryZone zones.
-    fn restore_memory_regions_and_zones(
-        guest_ram_mappings: &[GuestRamMapping],
-        zones_config: &[MemoryZoneConfig],
-        prefault: Option<bool>,
-        mut existing_memory_files: HashMap<u32, File>,
-        thp: bool,
-    ) -> Result<(Vec<Arc<GuestRegionMmap>>, MemoryZones), Error> {
-        let mut memory_regions = Vec::new();
-        let mut memory_zones = HashMap::new();
-
-        for zone_config in zones_config {
-            memory_zones.insert(zone_config.id.clone(), MemoryZone::default());
-        }
-
-        for guest_ram_mapping in guest_ram_mappings {
-            for zone_config in zones_config {
-                if guest_ram_mapping.zone_id == zone_config.id {
-                    let region = MemoryManager::create_ram_region(
-                        &zone_config.file,
-                        guest_ram_mapping.file_offset,
-                        GuestAddress(guest_ram_mapping.gpa),
-                        guest_ram_mapping.size as usize,
-                        prefault.unwrap_or(zone_config.prefault),
-                        zone_config.shared,
-                        zone_config.hugepages,
-                        zone_config.hugepage_size,
-                        zone_config.host_numa_node,
-                        existing_memory_files.remove(&guest_ram_mapping.slot),
-                        thp,
-                    )?;
-                    memory_regions.push(Arc::clone(&region));
-                    if let Some(memory_zone) = memory_zones.get_mut(&guest_ram_mapping.zone_id) {
-                        memory_zone.regions.push(region);
-                    }
-                }
-            }
-        }
-
-        memory_regions.sort_by_key(|x| x.start_addr());
-
-        Ok((memory_regions, memory_zones))
-    }
-
-    fn fill_saved_regions(
-        &mut self,
-        file_path: PathBuf,
-        saved_regions: MemoryRangeTable,
-    ) -> Result<(), Error> {
-        if saved_regions.is_empty() {
-            return Ok(());
-        }
-
-        // Open (read only) the snapshot file.
-        let mut memory_file = OpenOptions::new()
-            .read(true)
-            .open(file_path)
-            .map_err(Error::SnapshotOpen)?;
-
-        let guest_memory = self.guest_memory.memory();
-        for range in saved_regions.regions() {
-            let mut offset: u64 = 0;
-            // Here we are manually handling the retry in case we can't write
-            // the whole region at once because we can't use the implementation
-            // from vm-memory::GuestMemory of read_exact_from() as it is not
-            // following the correct behavior. For more info about this issue
-            // see: https://github.com/rust-vmm/vm-memory/issues/174
-            loop {
-                let bytes_read = guest_memory
-                    .read_volatile_from(
-                        GuestAddress(range.gpa + offset),
-                        &mut memory_file,
-                        (range.length - offset) as usize,
-                    )
-                    .map_err(Error::SnapshotCopy)?;
-                offset += bytes_read as u64;
-
-                if offset == range.length {
-                    break;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     fn validate_memory_config(
         config: &MemoryConfig,
         user_provided_zones: bool,
@@ -858,8 +771,6 @@ impl MemoryManager {
         config: &MemoryConfig,
         prefault: Option<bool>,
         phys_bits: u8,
-        #[cfg(feature = "tdx")] tdx_enabled: bool,
-        restore_data: Option<&MemoryManagerSnapshotData>,
         existing_memory_files: Option<HashMap<u32, File>>,
         #[cfg(target_arch = "x86_64")] sgx_epc_config: Option<Vec<SgxEpcConfig>>,
     ) -> Result<Arc<Mutex<MemoryManager>>, Error> {
@@ -889,31 +800,7 @@ impl MemoryManager {
             next_memory_slot,
             selected_slot,
             next_hotplug_slot,
-        ) = if let Some(data) = restore_data {
-            let (regions, memory_zones) = Self::restore_memory_regions_and_zones(
-                &data.guest_ram_mappings,
-                &zones,
-                prefault,
-                existing_memory_files.unwrap_or_default(),
-                config.thp,
-            )?;
-            let guest_memory =
-                GuestMemoryMmap::from_arc_regions(regions).map_err(Error::GuestMemory)?;
-            let boot_guest_memory = guest_memory.clone();
-            (
-                GuestAddress(data.start_of_device_area),
-                data.boot_ram,
-                data.current_ram,
-                data.arch_mem_regions.clone(),
-                memory_zones,
-                guest_memory,
-                boot_guest_memory,
-                data.hotplug_slots.clone(),
-                data.next_memory_slot,
-                data.selected_slot,
-                data.next_hotplug_slot,
-            )
-        } else {
+        ) = {
             // Init guest memory
             let arch_mem_regions = arch::arch_memory_regions();
 
@@ -1044,44 +931,6 @@ impl MemoryManager {
         }
 
         Ok(Arc::new(Mutex::new(memory_manager)))
-    }
-
-    pub fn new_from_snapshot(
-        snapshot: &Snapshot,
-        vm: Arc<dyn hypervisor::Vm>,
-        config: &MemoryConfig,
-        source_url: Option<&str>,
-        prefault: bool,
-        phys_bits: u8,
-    ) -> Result<Arc<Mutex<MemoryManager>>, Error> {
-        if let Some(source_url) = source_url {
-            let mut memory_file_path = url_to_path(source_url).map_err(Error::Restore)?;
-            memory_file_path.push(String::from(SNAPSHOT_FILENAME));
-
-            let mem_snapshot: MemoryManagerSnapshotData =
-                snapshot.to_versioned_state().map_err(Error::Restore)?;
-
-            let mm = MemoryManager::new(
-                vm,
-                config,
-                Some(prefault),
-                phys_bits,
-                #[cfg(feature = "tdx")]
-                false,
-                Some(&mem_snapshot),
-                None,
-                #[cfg(target_arch = "x86_64")]
-                None,
-            )?;
-
-            mm.lock()
-                .unwrap()
-                .fill_saved_regions(memory_file_path, mem_snapshot.memory_ranges)?;
-
-            Ok(mm)
-        } else {
-            Err(Error::RestoreMissingSourceUrl)
-        }
     }
 
     fn memfd_create(name: &ffi::CStr, flags: u32) -> Result<RawFd, io::Error> {
@@ -1771,21 +1620,6 @@ impl MemoryManager {
         Ok(table)
     }
 
-    pub fn snapshot_data(&self) -> MemoryManagerSnapshotData {
-        MemoryManagerSnapshotData {
-            memory_ranges: self.snapshot_memory_ranges.clone(),
-            guest_ram_mappings: self.guest_ram_mappings.clone(),
-            start_of_device_area: self.start_of_device_area.0,
-            boot_ram: self.boot_ram,
-            current_ram: self.current_ram,
-            arch_mem_regions: self.arch_mem_regions.clone(),
-            hotplug_slots: self.hotplug_slots.clone(),
-            next_memory_slot: self.next_memory_slot,
-            selected_slot: self.selected_slot,
-            next_hotplug_slot: self.next_hotplug_slot,
-        }
-    }
-
     pub fn memory_slot_fds(&self) -> HashMap<u32, RawFd> {
         let mut memory_slot_fds = HashMap::new();
         for guest_ram_mapping in &self.guest_ram_mappings {
@@ -2288,167 +2122,5 @@ impl Aml for MemoryManager {
                 .to_aml_bytes(sink);
             }
         }
-    }
-}
-
-impl Pausable for MemoryManager {}
-
-#[derive(Clone, Serialize, Deserialize, Versionize)]
-pub struct MemoryManagerSnapshotData {
-    memory_ranges: MemoryRangeTable,
-    guest_ram_mappings: Vec<GuestRamMapping>,
-    start_of_device_area: u64,
-    boot_ram: u64,
-    current_ram: u64,
-    arch_mem_regions: Vec<ArchMemRegion>,
-    hotplug_slots: Vec<HotPlugState>,
-    next_memory_slot: u32,
-    selected_slot: usize,
-    next_hotplug_slot: usize,
-}
-
-impl VersionMapped for MemoryManagerSnapshotData {}
-
-impl Snapshottable for MemoryManager {
-    fn id(&self) -> String {
-        MEMORY_MANAGER_SNAPSHOT_ID.to_string()
-    }
-
-    fn snapshot(&mut self) -> result::Result<Snapshot, MigratableError> {
-        let memory_ranges = self.memory_range_table(true)?;
-
-        // Store locally this list of ranges as it will be used through the
-        // Transportable::send() implementation. The point is to avoid the
-        // duplication of code regarding the creation of the path for each
-        // region. The 'snapshot' step creates the list of memory regions,
-        // including information about the need to copy a memory region or
-        // not. This saves the 'send' step having to go through the same
-        // process, and instead it can directly proceed with storing the
-        // memory range content for the ranges requiring it.
-        self.snapshot_memory_ranges = memory_ranges;
-
-        Ok(Snapshot::from_data(SnapshotData::new_from_versioned_state(
-            &self.snapshot_data(),
-        )?))
-    }
-}
-
-impl Transportable for MemoryManager {
-    fn send(
-        &self,
-        _snapshot: &Snapshot,
-        destination_url: &str,
-    ) -> result::Result<(), MigratableError> {
-        if self.snapshot_memory_ranges.is_empty() {
-            return Ok(());
-        }
-
-        let mut memory_file_path = url_to_path(destination_url)?;
-        memory_file_path.push(String::from(SNAPSHOT_FILENAME));
-
-        // Create the snapshot file for the entire memory
-        let mut memory_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(memory_file_path)
-            .map_err(|e| MigratableError::MigrateSend(e.into()))?;
-
-        let guest_memory = self.guest_memory.memory();
-
-        for range in self.snapshot_memory_ranges.regions() {
-            let mut offset: u64 = 0;
-            // Here we are manually handling the retry in case we can't read
-            // the whole region at once because we can't use the implementation
-            // from vm-memory::GuestMemory of write_all_to() as it is not
-            // following the correct behavior. For more info about this issue
-            // see: https://github.com/rust-vmm/vm-memory/issues/174
-            loop {
-                let bytes_written = guest_memory
-                    .write_volatile_to(
-                        GuestAddress(range.gpa + offset),
-                        &mut memory_file,
-                        (range.length - offset) as usize,
-                    )
-                    .map_err(|e| MigratableError::MigrateSend(e.into()))?;
-                offset += bytes_written as u64;
-
-                if offset == range.length {
-                    break;
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Migratable for MemoryManager {
-    // Start the dirty log in the hypervisor (kvm/mshv).
-    // Also, reset the dirty bitmap logged by the vmm.
-    // Just before we do a bulk copy we want to start/clear the dirty log so that
-    // pages touched during our bulk copy are tracked.
-    fn start_dirty_log(&mut self) -> std::result::Result<(), MigratableError> {
-        self.vm.start_dirty_log().map_err(|e| {
-            MigratableError::MigrateSend(anyhow!("Error starting VM dirty log {}", e))
-        })?;
-
-        for r in self.guest_memory.memory().iter() {
-            r.bitmap().reset();
-        }
-
-        Ok(())
-    }
-
-    fn stop_dirty_log(&mut self) -> std::result::Result<(), MigratableError> {
-        self.vm.stop_dirty_log().map_err(|e| {
-            MigratableError::MigrateSend(anyhow!("Error stopping VM dirty log {}", e))
-        })?;
-
-        Ok(())
-    }
-
-    // Generate a table for the pages that are dirty. The dirty pages are collapsed
-    // together in the table if they are contiguous.
-    fn dirty_log(&mut self) -> std::result::Result<MemoryRangeTable, MigratableError> {
-        let mut table = MemoryRangeTable::default();
-        for r in &self.guest_ram_mappings {
-            let vm_dirty_bitmap = self.vm.get_dirty_log(r.slot, r.gpa, r.size).map_err(|e| {
-                MigratableError::MigrateSend(anyhow!("Error getting VM dirty log {}", e))
-            })?;
-            let vmm_dirty_bitmap = match self.guest_memory.memory().find_region(GuestAddress(r.gpa))
-            {
-                Some(region) => {
-                    assert!(region.start_addr().raw_value() == r.gpa);
-                    assert!(region.len() == r.size);
-                    region.bitmap().get_and_reset()
-                }
-                None => {
-                    return Err(MigratableError::MigrateSend(anyhow!(
-                        "Error finding 'guest memory region' with address {:x}",
-                        r.gpa
-                    )))
-                }
-            };
-
-            let dirty_bitmap: Vec<u64> = vm_dirty_bitmap
-                .iter()
-                .zip(vmm_dirty_bitmap.iter())
-                .map(|(x, y)| x | y)
-                .collect();
-
-            let sub_table = MemoryRangeTable::from_bitmap(dirty_bitmap, r.gpa, 4096);
-
-            if sub_table.regions().is_empty() {
-                info!("Dirty Memory Range Table is empty");
-            } else {
-                info!("Dirty Memory Range Table:");
-                for range in sub_table.regions() {
-                    info!("GPA: {:x} size: {} (KiB)", range.gpa, range.length / 1024);
-                }
-            }
-
-            table.extend(sub_table);
-        }
-        Ok(table)
     }
 }

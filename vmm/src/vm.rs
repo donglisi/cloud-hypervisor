@@ -27,7 +27,7 @@ use crate::gdb::{Debuggable, DebuggableError, GdbRequestPayload, GdbResponsePayl
 #[cfg(feature = "igvm")]
 use crate::igvm::igvm_loader;
 use crate::memory_manager::{
-    Error as MemoryManagerError, MemoryManager, MemoryManagerSnapshotData,
+    Error as MemoryManagerError, MemoryManager,
 };
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::migration::url_to_file;
@@ -670,19 +670,7 @@ impl Vm {
 
         let phys_bits = physical_bits(&hypervisor, vm_config.lock().unwrap().cpus.max_phys_bits);
 
-        let memory_manager = if let Some(snapshot) =
-            snapshot_from_id(snapshot.as_ref(), MEMORY_MANAGER_SNAPSHOT_ID)
-        {
-            MemoryManager::new_from_snapshot(
-                &snapshot,
-                vm.clone(),
-                &vm_config.lock().unwrap().memory.clone(),
-                source_url,
-                prefault.unwrap(),
-                phys_bits,
-            )
-            .map_err(Error::MemoryManager)?
-        } else {
+        let memory_manager = {
             #[cfg(target_arch = "x86_64")]
             let sgx_epc_config = vm_config.lock().unwrap().sgx_epc.clone();
 
@@ -693,7 +681,6 @@ impl Vm {
                 phys_bits,
                 #[cfg(feature = "tdx")]
                 tdx_enabled,
-                None,
                 None,
                 #[cfg(target_arch = "x86_64")]
                 sgx_epc_config,
@@ -1629,10 +1616,6 @@ impl Vm {
             .unwrap()
             .notify_power_button()
             .map_err(Error::PowerButton)
-    }
-
-    pub fn memory_manager_data(&self) -> MemoryManagerSnapshotData {
-        self.memory_manager.lock().unwrap().snapshot_data()
     }
 
     #[cfg(feature = "guest_debug")]
