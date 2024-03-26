@@ -11,7 +11,6 @@ use crate::coredump::{
 };
 use crate::{GuestMemoryMmap, GuestRegionMmap};
 use acpi_tables::{aml, Aml};
-use anyhow::anyhow;
 #[cfg(target_arch = "x86_64")]
 use arch::x86_64::{SgxEpcRegion, SgxEpcSection};
 use arch::RegionType;
@@ -46,10 +45,6 @@ use vm_memory::guest_memory::FileOffset;
 use vm_memory::{
     mmap::MmapRegionError, Address, Error as MmapError, GuestAddress, GuestAddressSpace,
     GuestMemory, GuestMemoryAtomic, GuestMemoryError, GuestMemoryRegion, GuestUsize, MmapRegion,
-    ReadVolatile,
-};
-use vm_migration::{
-    protocol::MemoryRange, protocol::MemoryRangeTable, MigratableError,
 };
 
 pub const MEMORY_MANAGER_ACPI_SIZE: usize = 0x18;
@@ -183,9 +178,6 @@ pub enum Error {
 
     /// Eventfd write error
     EventfdError(io::Error),
-
-    /// Cannot restore VM
-    Restore(MigratableError),
 
     /// Cannot restore VM because source URL is missing
     RestoreMissingSourceUrl,
@@ -1563,43 +1555,6 @@ impl MemoryManager {
         &mut self.memory_zones
     }
 
-    pub fn memory_range_table(
-        &self,
-        snapshot: bool,
-    ) -> std::result::Result<MemoryRangeTable, MigratableError> {
-        let mut table = MemoryRangeTable::default();
-
-        for memory_zone in self.memory_zones.values() {
-            for region in memory_zone.regions() {
-                if snapshot {
-                    if let Some(file_offset) = region.file_offset() {
-                        if (region.flags() & libc::MAP_SHARED == libc::MAP_SHARED)
-                            && Self::is_hardlink(file_offset.file())
-                        {
-                            // In this very specific case, we know the memory
-                            // region is backed by a file on the host filesystem
-                            // that can be accessed by the user, and additionally
-                            // the mapping is shared, which means that modifications
-                            // to the content are written to the actual file.
-                            // When meeting these conditions, we can skip the
-                            // copy of the memory content for this specific region,
-                            // as we can assume the user will have it saved through
-                            // the backing file already.
-                            continue;
-                        }
-                    }
-                }
-
-                table.push(MemoryRange {
-                    gpa: region.start_addr().raw_value(),
-                    length: region.len(),
-                });
-            }
-        }
-
-        Ok(table)
-    }
-
     pub fn memory_slot_fds(&self) -> HashMap<u32, RawFd> {
         let mut memory_slot_fds = HashMap::new();
         for guest_ram_mapping in &self.guest_ram_mappings {
@@ -1627,110 +1582,6 @@ impl MemoryManager {
     #[cfg(target_arch = "aarch64")]
     pub fn uefi_flash(&self) -> GuestMemoryAtomic<GuestMemoryMmap> {
         self.uefi_flash.as_ref().unwrap().clone()
-    }
-
-    #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
-    pub fn coredump_memory_regions(&self, mem_offset: u64) -> CoredumpMemoryRegions {
-        let mut mapping_sorted_by_gpa = self.guest_ram_mappings.clone();
-        mapping_sorted_by_gpa.sort_by_key(|m| m.gpa);
-
-        let mut mem_offset_in_elf = mem_offset;
-        let mut ram_maps = BTreeMap::new();
-        for mapping in mapping_sorted_by_gpa.iter() {
-            ram_maps.insert(
-                mapping.gpa,
-                CoredumpMemoryRegion {
-                    mem_offset_in_elf,
-                    mem_size: mapping.size,
-                },
-            );
-            mem_offset_in_elf += mapping.size;
-        }
-
-        CoredumpMemoryRegions { ram_maps }
-    }
-
-    #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
-    pub fn coredump_iterate_save_mem(
-        &mut self,
-        dump_state: &DumpState,
-    ) -> std::result::Result<(), GuestDebuggableError> {
-        let snapshot_memory_ranges = self
-            .memory_range_table(false)
-            .map_err(|e| GuestDebuggableError::Coredump(e.into()))?;
-
-        if snapshot_memory_ranges.is_empty() {
-            return Ok(());
-        }
-
-        let coredump_file = dump_state.file.as_ref().unwrap();
-
-        let guest_memory = self.guest_memory.memory();
-        let mut total_bytes: u64 = 0;
-
-        for range in snapshot_memory_ranges.regions() {
-            let mut offset: u64 = 0;
-            loop {
-                let bytes_written = guest_memory
-                    .write_volatile_to(
-                        GuestAddress(range.gpa + offset),
-                        &mut coredump_file.as_fd(),
-                        (range.length - offset) as usize,
-                    )
-                    .map_err(|e| GuestDebuggableError::Coredump(e.into()))?;
-                offset += bytes_written as u64;
-                total_bytes += bytes_written as u64;
-
-                if offset == range.length {
-                    break;
-                }
-            }
-        }
-
-        debug!("coredump total bytes {}", total_bytes);
-        Ok(())
-    }
-
-    pub fn receive_memory_regions<F>(
-        &mut self,
-        ranges: &MemoryRangeTable,
-        fd: &mut F,
-    ) -> std::result::Result<(), MigratableError>
-    where
-        F: ReadVolatile,
-    {
-        let guest_memory = self.guest_memory();
-        let mem = guest_memory.memory();
-
-        for range in ranges.regions() {
-            let mut offset: u64 = 0;
-            // Here we are manually handling the retry in case we can't the
-            // whole region at once because we can't use the implementation
-            // from vm-memory::GuestMemory of read_exact_from() as it is not
-            // following the correct behavior. For more info about this issue
-            // see: https://github.com/rust-vmm/vm-memory/issues/174
-            loop {
-                let bytes_read = mem
-                    .read_volatile_from(
-                        GuestAddress(range.gpa + offset),
-                        fd,
-                        (range.length - offset) as usize,
-                    )
-                    .map_err(|e| {
-                        MigratableError::MigrateReceive(anyhow!(
-                            "Error receiving memory from socket: {}",
-                            e
-                        ))
-                    })?;
-                offset += bytes_read as u64;
-
-                if offset == range.length {
-                    break;
-                }
-            }
-        }
-
-        Ok(())
     }
 }
 
