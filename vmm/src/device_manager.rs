@@ -59,7 +59,9 @@ use vm_device::interrupt::{
     InterruptIndex, InterruptManager, LegacyIrqGroupConfig, MsiIrqGroupConfig,
 };
 use vm_device::{Bus, BusDevice};
-use vm_memory::{Address, GuestAddress};
+#[cfg(target_arch = "aarch64")]
+use vm_memory::Address;
+use vm_memory::GuestAddress;
 use vm_migration::{
     protocol::MemoryRangeTable, versioned_state_from_id, Migratable,
     MigratableError, Pausable, Snapshot, SnapshotData, Snapshottable, Transportable,
