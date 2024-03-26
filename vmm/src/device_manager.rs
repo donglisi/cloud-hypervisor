@@ -74,8 +74,6 @@ const MMIO_LEN: u64 = 0x1000;
 #[cfg(target_arch = "x86_64")]
 const IOAPIC_DEVICE_NAME: &str = "__ioapic";
 const SERIAL_DEVICE_NAME: &str = "__serial";
-#[cfg(target_arch = "x86_64")]
-const DEBUGCON_DEVICE_NAME: &str = "__debug_console";
 
 /// Errors associated with device manager
 #[derive(Debug)]
@@ -659,7 +657,6 @@ impl DeviceManager {
         // Create IOAPIC
         let interrupt_controller = Arc::new(Mutex::new(
             ioapic::Ioapic::new(
-                id.clone(),
                 APIC_START,
                 Arc::clone(&self.msi_interrupt_manager),
             )
@@ -865,7 +862,6 @@ impl DeviceManager {
             .map_err(DeviceManagerError::CreateInterruptGroup)?;
 
         let serial = Arc::new(Mutex::new(Serial::new(
-            id.clone(),
             interrupt_group,
             serial_writer,
         )));

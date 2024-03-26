@@ -57,7 +57,6 @@ const DEFAULT_BAUD_DIVISOR: u16 = 12; // 9600 bps
 /// This can optionally write the guest's output to a Write trait object. To send input to the
 /// guest, use `queue_input_bytes`.
 pub struct Serial {
-    id: String,
     interrupt_enable: u8,
     interrupt_identification: u8,
     line_control: u8,
@@ -86,7 +85,6 @@ pub struct SerialState {
 
 impl Serial {
     pub fn new(
-        id: String,
         interrupt: Arc<dyn InterruptSourceGroup>,
         out: Option<Box<dyn io::Write + Send>>,
     ) -> Serial {
@@ -115,7 +113,6 @@ impl Serial {
         };
 
         Serial {
-            id,
             interrupt_enable,
             interrupt_identification,
             line_control,
@@ -132,19 +129,17 @@ impl Serial {
 
     /// Constructs a Serial port ready for output.
     pub fn new_out(
-        id: String,
         interrupt: Arc<dyn InterruptSourceGroup>,
         out: Box<dyn io::Write + Send>,
     ) -> Serial {
-        Self::new(id, interrupt, Some(out))
+        Self::new(interrupt, Some(out))
     }
 
     /// Constructs a Serial port with no connected output.
     pub fn new_sink(
-        id: String,
         interrupt: Arc<dyn InterruptSourceGroup>,
     ) -> Serial {
-        Self::new(id, interrupt, None)
+        Self::new(interrupt, None)
     }
 
     pub fn set_out(&mut self, out: Option<Box<dyn io::Write + Send>>) {
@@ -250,20 +245,6 @@ impl Serial {
             _ => {}
         }
         Ok(())
-    }
-
-    fn state(&self) -> SerialState {
-        SerialState {
-            interrupt_enable: self.interrupt_enable,
-            interrupt_identification: self.interrupt_identification,
-            line_control: self.line_control,
-            line_status: self.line_status,
-            modem_control: self.modem_control,
-            modem_status: self.modem_status,
-            scratch: self.scratch,
-            baud_divisor: self.baud_divisor,
-            in_buffer: self.in_buffer.clone().into(),
-        }
     }
 }
 

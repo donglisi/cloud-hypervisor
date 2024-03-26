@@ -29,8 +29,6 @@ use crate::igvm::igvm_loader;
 use crate::memory_manager::{
     Error as MemoryManagerError, MemoryManager, MemoryManagerSnapshotData,
 };
-#[cfg(all(feature = "kvm", target_arch = "x86_64"))]
-use crate::migration::get_vm_snapshot;
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::migration::url_to_file;
 use crate::GuestMemoryMmap;
@@ -440,13 +438,6 @@ pub struct Vm {
     state: RwLock<VmState>,
     cpu_manager: Arc<Mutex<cpu::CpuManager>>,
     memory_manager: Arc<Mutex<MemoryManager>>,
-    #[cfg_attr(any(not(feature = "kvm"), target_arch = "aarch64"), allow(dead_code))]
-    // The hypervisor abstracted virtual machine.
-    vm: Arc<dyn hypervisor::Vm>,
-    #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
-    saved_clock: Option<hypervisor::ClockData>,
-    #[cfg_attr(any(not(feature = "kvm"), target_arch = "aarch64"), allow(dead_code))]
-    hypervisor: Arc<dyn hypervisor::Hypervisor>,
     stop_on_boot: bool,
     load_payload_handle: Option<thread::JoinHandle<Result<EntryPoint>>>,
 }
@@ -619,14 +610,6 @@ impl Vm {
             .transpose()
             .map_err(Error::InitramfsFile)?;
 
-        #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
-        let saved_clock = if let Some(snapshot) = snapshot.as_ref() {
-            let vm_snapshot = get_vm_snapshot(snapshot).map_err(Error::Restore)?;
-            vm_snapshot.clock
-        } else {
-            None
-        };
-
         let vm_state = if snapshot.is_some() {
             VmState::Paused
         } else {
@@ -643,10 +626,6 @@ impl Vm {
             state: RwLock::new(vm_state),
             cpu_manager,
             memory_manager,
-            vm,
-            #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
-            saved_clock,
-            hypervisor,
             stop_on_boot,
             load_payload_handle,
         })

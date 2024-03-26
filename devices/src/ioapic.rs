@@ -124,7 +124,6 @@ fn decode_irq_from_selector(selector: u8) -> (usize, bool) {
 }
 
 pub struct Ioapic {
-    id: String,
     id_reg: u32,
     reg_sel: u32,
     reg_entries: [RedirectionTableEntry; NUM_IOAPIC_PINS],
@@ -186,7 +185,6 @@ impl BusDevice for Ioapic {
 
 impl Ioapic {
     pub fn new(
-        id: String,
         apic_address: GuestAddress,
         interrupt_manager: Arc<dyn InterruptManager<GroupConfig = MsiIrqGroupConfig>>,
     ) -> Result<Ioapic> {
@@ -210,7 +208,6 @@ impl Ioapic {
         // The IOAPIC is created with entries already masked. The guest will be
         // in charge of unmasking them if/when necessary.
         let ioapic = Ioapic {
-            id,
             id_reg,
             reg_sel,
             reg_entries,
@@ -293,16 +290,6 @@ impl Ioapic {
                 );
                 0
             }
-        }
-    }
-
-    fn state(&self) -> IoapicState {
-        IoapicState {
-            id_reg: self.id_reg,
-            reg_sel: self.reg_sel,
-            reg_entries: self.reg_entries,
-            used_entries: self.used_entries,
-            apic_address: self.apic_address.0,
         }
     }
 
