@@ -1633,3 +1633,12 @@ impl BusDevice for DeviceManager {
         None
     }
 }
+
+impl Drop for DeviceManager {
+    fn drop(&mut self) {
+        if let Some(termios) = *self.original_termios_opt.lock().unwrap() {
+            // SAFETY: FFI call
+            let _ = unsafe { tcsetattr(stdout().lock().as_raw_fd(), TCSANOW, &termios) };
+        }
+    }
+}
