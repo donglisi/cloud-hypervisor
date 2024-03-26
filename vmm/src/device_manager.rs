@@ -61,7 +61,7 @@ use vm_device::interrupt::{
 use vm_device::{Bus, BusDevice};
 use vm_memory::{Address, GuestAddress};
 use vm_migration::{
-    protocol::MemoryRangeTable, snapshot_from_id, versioned_state_from_id, Migratable,
+    protocol::MemoryRangeTable, versioned_state_from_id, Migratable,
     MigratableError, Pausable, Snapshot, SnapshotData, Snapshottable, Transportable,
 };
 use vmm_sys_util::eventfd::EventFd;
@@ -676,36 +676,6 @@ impl DeviceManager {
         ));
 
         self.interrupt_controller = Some(interrupt_controller.clone());
-
-        // Restore the vGic if this is in the process of restoration
-        let id = String::from(gic::GIC_SNAPSHOT_ID);
-        if let Some(vgic_snapshot) = snapshot_from_id(self.snapshot.as_ref(), &id) {
-            // PMU support is optional. Nothing should be impacted if the PMU initialization failed.
-            if self
-                .cpu_manager
-                .lock()
-                .unwrap()
-                .init_pmu(arch::aarch64::fdt::AARCH64_PMU_IRQ + 16)
-                .is_err()
-            {
-                info!("Failed to initialize PMU");
-            }
-
-            let vgic_state = vgic_snapshot
-                .to_state()
-                .map_err(DeviceManagerError::RestoreGetState)?;
-            let saved_vcpu_states = self.cpu_manager.lock().unwrap().get_saved_states();
-            interrupt_controller
-                .lock()
-                .unwrap()
-                .restore_vgic(vgic_state, &saved_vcpu_states)
-                .unwrap();
-        }
-
-        self.device_tree
-            .lock()
-            .unwrap()
-            .insert(id.clone(), device_node!(id, interrupt_controller));
 
         Ok(interrupt_controller)
     }
