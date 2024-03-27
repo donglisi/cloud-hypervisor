@@ -796,20 +796,6 @@ impl RequestHandler for Vmm {
         Ok(())
     }
 
-    fn vm_counters(&mut self) -> result::Result<Option<Vec<u8>>, VmError> {
-        if let Some(ref mut vm) = self.vm {
-            let info = vm.counters().map_err(|e| {
-                error!("Error when getting counters from the VM: {:?}", e);
-                e
-            })?;
-            serde_json::to_vec(&info)
-                .map(Some)
-                .map_err(VmError::SerializeJson)
-        } else {
-            Err(VmError::VmNotRunning)
-        }
-    }
-
     fn vm_power_button(&mut self) -> result::Result<(), VmError> {
         if let Some(ref mut vm) = self.vm {
             vm.power_button()

@@ -199,9 +199,6 @@ pub enum Error {
     #[error("Too many virtio-vsock devices")]
     TooManyVsockDevices,
 
-    #[error("Failed serializing into JSON: {0}")]
-    SerializeJson(#[source] serde_json::Error),
-
     #[error("Invalid NUMA configuration")]
     InvalidNumaConfig,
 

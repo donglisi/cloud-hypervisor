@@ -4,10 +4,8 @@
 
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::coredump::GuestDebuggableError;
-use crate::{config::VmConfig, vm::VmSnapshot};
+use crate::{vm::VmSnapshot};
 use anyhow::anyhow;
-use std::fs::File;
-use std::io::Read;
 use std::path::PathBuf;
 use vm_migration::{MigratableError, Snapshot};
 
@@ -41,38 +39,6 @@ pub fn url_to_file(url: &str) -> std::result::Result<PathBuf, GuestDebuggableErr
         .map(|s| s.into())?;
 
     Ok(file)
-}
-
-pub fn recv_vm_config(source_url: &str) -> std::result::Result<VmConfig, MigratableError> {
-    let mut vm_config_path = url_to_path(source_url)?;
-
-    vm_config_path.push(SNAPSHOT_CONFIG_FILE);
-
-    // Try opening the snapshot file
-    let mut vm_config_file =
-        File::open(vm_config_path).map_err(|e| MigratableError::MigrateReceive(e.into()))?;
-    let mut bytes = Vec::new();
-    vm_config_file
-        .read_to_end(&mut bytes)
-        .map_err(|e| MigratableError::MigrateReceive(e.into()))?;
-
-    serde_json::from_slice(&bytes).map_err(|e| MigratableError::MigrateReceive(e.into()))
-}
-
-pub fn recv_vm_state(source_url: &str) -> std::result::Result<Snapshot, MigratableError> {
-    let mut vm_state_path = url_to_path(source_url)?;
-
-    vm_state_path.push(SNAPSHOT_STATE_FILE);
-
-    // Try opening the snapshot file
-    let mut vm_state_file =
-        File::open(vm_state_path).map_err(|e| MigratableError::MigrateReceive(e.into()))?;
-    let mut bytes = Vec::new();
-    vm_state_file
-        .read_to_end(&mut bytes)
-        .map_err(|e| MigratableError::MigrateReceive(e.into()))?;
-
-    serde_json::from_slice(&bytes).map_err(|e| MigratableError::MigrateReceive(e.into()))
 }
 
 pub fn get_vm_snapshot(snapshot: &Snapshot) -> std::result::Result<VmSnapshot, MigratableError> {

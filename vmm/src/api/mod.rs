@@ -282,8 +282,6 @@ pub trait RequestHandler {
 
     fn vmm_shutdown(&mut self) -> Result<(), VmError>;
 
-    fn vm_counters(&mut self) -> Result<Option<Vec<u8>>, VmError>;
-
     fn vm_power_button(&mut self) -> Result<(), VmError>;
 }
 
@@ -401,39 +399,6 @@ impl ApiAction for VmCoredump {
                 .vm_coredump(&coredump_data.destination_url)
                 .map_err(ApiError::VmCoredump)
                 .map(|_| ApiResponsePayload::Empty);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
-    }
-}
-
-pub struct VmCounters;
-
-impl ApiAction for VmCounters {
-    type RequestBody = ();
-    type ResponseBody = Option<Body>;
-
-    fn request(&self, _: Self::RequestBody, response_sender: Sender<ApiResponse>) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmCounters");
-
-            let response = vmm
-                .vm_counters()
-                .map_err(ApiError::VmInfo)
-                .map(ApiResponsePayload::VmAction);
 
             response_sender
                 .send(response)
