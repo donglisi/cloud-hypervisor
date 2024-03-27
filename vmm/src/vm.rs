@@ -75,7 +75,7 @@ use vm_memory::{
     Bytes, GuestAddress, GuestAddressSpace, GuestMemory, GuestMemoryAtomic, WriteVolatile,
 };
 use vm_migration::{
-    protocol::MemoryRangeTable, MigratableError, Snapshot,
+    protocol::MemoryRangeTable, MigratableError,
 };
 use vmm_sys_util::eventfd::EventFd;
 
@@ -440,14 +440,8 @@ impl Vm {
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
         serial_pty: Option<PtyPair>,
         original_termios: Arc<Mutex<Option<termios>>>,
-        snapshot: Option<Snapshot>,
     ) -> Result<Self> {
-        #[cfg(not(feature = "igvm"))]
-        let load_payload_handle = if snapshot.is_none() {
-            Self::load_payload_async(&memory_manager, &config)?
-        } else {
-            None
-        };
+        let load_payload_handle = Self::load_payload_async(&memory_manager, &config)?;
 
         info!("Booting VM from config: {:?}", &config);
 
@@ -591,11 +585,7 @@ impl Vm {
             .transpose()
             .map_err(Error::InitramfsFile)?;
 
-        let vm_state = if snapshot.is_some() {
-            VmState::Paused
-        } else {
-            VmState::Created
-        };
+        let vm_state = VmState::Created;
 
         Ok(Vm {
             #[cfg(feature = "tdx")]
@@ -621,7 +611,6 @@ impl Vm {
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
         serial_pty: Option<PtyPair>,
         original_termios: Arc<Mutex<Option<termios>>>,
-        snapshot: Option<Snapshot>,
     ) -> Result<Self> {
         let vm = Self::create_hypervisor_vm(
             &hypervisor,
@@ -661,7 +650,6 @@ impl Vm {
             hypervisor,
             serial_pty,
             original_termios,
-            snapshot,
         )
     }
 

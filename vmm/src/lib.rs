@@ -651,7 +651,6 @@ impl RequestHandler for Vmm {
                         self.hypervisor.clone(),
                         None,
                         Arc::clone(&self.original_termios_opt),
-                        None,
                     )?;
 
                     self.vm = Some(vm);
@@ -725,7 +724,6 @@ impl RequestHandler for Vmm {
             self.hypervisor.clone(),
             serial_pty,
             Arc::clone(&self.original_termios_opt),
-            None,
         )?;
 
         // And we boot it
