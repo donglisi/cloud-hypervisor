@@ -1631,19 +1631,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "vm-migration"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "thiserror",
- "versionize",
- "versionize_derive",
- "vm-memory",
-]
-
-[[package]]
 name = "vmm"
 version = "0.1.0"
 dependencies = [
@@ -1670,7 +1657,6 @@ dependencies = [
  "vm-allocator",
  "vm-device",
  "vm-memory",
- "vm-migration",
  "vmm-sys-util",
  "zerocopy",
 ]

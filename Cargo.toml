@@ -74,5 +74,4 @@ members = [
     "vmm",
     "vm-allocator",
     "vm-device",
-    "vm-migration",
 ]

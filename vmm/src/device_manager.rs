@@ -59,9 +59,6 @@ use vm_device::{Bus, BusDevice};
 #[cfg(target_arch = "aarch64")]
 use vm_memory::Address;
 use vm_memory::GuestAddress;
-use vm_migration::{
-    MigratableError
-};
 use vmm_sys_util::eventfd::EventFd;
 #[cfg(target_arch = "x86_64")]
 use {devices::legacy::Serial};
@@ -269,9 +266,6 @@ pub enum DeviceManagerError {
 
     /// Invalid identifier
     InvalidIdentifier(String),
-
-    /// Failed retrieving device state from snapshot
-    RestoreGetState(MigratableError),
 }
 
 pub type DeviceManagerResult<T> = result::Result<T, DeviceManagerError>;

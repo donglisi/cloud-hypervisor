@@ -48,7 +48,6 @@ use std::fmt::Display;
 use std::io;
 use std::sync::mpsc::{channel, RecvError, SendError, Sender};
 use std::sync::{Arc, Mutex};
-use vm_migration::MigratableError;
 use vmm_sys_util::eventfd::EventFd;
 
 /// API errors are sent back from the VMM API server through the ApiResponse.
@@ -135,12 +134,6 @@ pub enum ApiError {
     /// The vsock device could not be added to the VM.
     VmAddVsock(VmError),
 
-    /// Error starting migration receiever
-    VmReceiveMigration(MigratableError),
-
-    /// Error starting migration sender
-    VmSendMigration(MigratableError),
-
     /// Error triggering power button
     VmPowerButton(VmError),
 }
@@ -177,8 +170,6 @@ impl Display for ApiError {
             VmAddNet(vm_error) => write!(f, "{}", vm_error),
             VmAddVdpa(vm_error) => write!(f, "{}", vm_error),
             VmAddVsock(vm_error) => write!(f, "{}", vm_error),
-            VmReceiveMigration(migratable_error) => write!(f, "{}", migratable_error),
-            VmSendMigration(migratable_error) => write!(f, "{}", migratable_error),
             VmPowerButton(vm_error) => write!(f, "{}", vm_error),
         }
     }
