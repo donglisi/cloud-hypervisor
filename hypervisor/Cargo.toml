@@ -8,14 +8,11 @@ license = "Apache-2.0 OR BSD-3-Clause"
 [features]
 kvm = ["kvm-ioctls", "kvm-bindings"]
 mshv = ["mshv-ioctls", "mshv-bindings", "iced-x86"]
-sev_snp = ["igvm_parser", "igvm_defs"]
 tdx = []
 
 [dependencies]
 anyhow = "1.0.79"
 byteorder = "1.4.3"
-igvm_defs = { git = "https://github.com/microsoft/igvm", branch = "main", package = "igvm_defs", optional  = true }
-igvm_parser = { git = "https://github.com/microsoft/igvm", branch = "main", package = "igvm", optional  = true }
 libc = "0.2.153"
 log = "0.4.20"
 kvm-ioctls = { version = "0.16.0", optional = true }

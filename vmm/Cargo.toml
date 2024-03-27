@@ -6,11 +6,8 @@ edition = "2021"
 
 [features]
 default = []
-guest_debug = ["kvm", "gdbstub", "gdbstub_arch"]
-igvm = ["hex", "igvm_parser", "igvm_defs",  "mshv-bindings", "range_map_vec"]
 kvm = ["hypervisor/kvm", "vm-device/kvm"]
 mshv = ["hypervisor/mshv", "vm-device/mshv"]
-sev_snp = ["arch/sev_snp", "hypervisor/sev_snp"]
 tdx = ["arch/tdx", "hypervisor/tdx"]
 
 [dependencies]
@@ -25,12 +22,8 @@ devices = { path = "../devices" }
 epoll = "4.3.3"
 flume = "0.10.14"
 futures = { version = "0.3.30", optional = true }
-gdbstub = { version = "0.7.1", optional = true }
-gdbstub_arch = { version = "0.3.0", optional = true }
 hex = { version = "0.4.3", optional = true }
 hypervisor = { path = "../hypervisor" }
-igvm_defs = { git = "https://github.com/microsoft/igvm", branch = "main", package = "igvm_defs", optional  = true }
-igvm_parser = { git = "https://github.com/microsoft/igvm", branch = "main", package = "igvm", optional  = true }
 libc = "0.2.153"
 linux-loader = { version = "0.11.0", features = ["elf", "bzimage", "pe"] }
 log = "0.4.20"
