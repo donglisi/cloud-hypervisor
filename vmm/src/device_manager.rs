@@ -722,8 +722,6 @@ impl DeviceManager {
         let serial = Arc::new(Mutex::new(devices::legacy::Pl011::new(
             interrupt_group,
             serial_writer,
-            self.timestamp,
-            None,
         )));
 
         self.bus_devices

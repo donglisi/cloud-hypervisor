@@ -10,7 +10,6 @@ use crate::{read_le_u32, write_le_u32};
 use std::collections::VecDeque;
 use std::fmt;
 use std::sync::{Arc, Barrier};
-use std::time::Instant;
 use std::{io, result};
 use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
@@ -87,7 +86,6 @@ pub struct Pl011 {
     read_trigger: u32,
     irq: Arc<dyn InterruptSourceGroup>,
     out: Option<Box<dyn io::Write + Send>>,
-    timestamp: std::time::Instant,
 }
 
 #[derive(Versionize)]
@@ -114,8 +112,6 @@ impl Pl011 {
     pub fn new(
         irq: Arc<dyn InterruptSourceGroup>,
         out: Option<Box<dyn io::Write + Send>>,
-        timestamp: Instant,
-        state: Option<Pl011State>,
     ) -> Self {
         let (
             flags,
@@ -133,25 +129,7 @@ impl Pl011 {
             ifl,
             read_count,
             read_trigger,
-        ) = if let Some(state) = state {
-            (
-                state.flags,
-                state.lcr,
-                state.rsr,
-                state.cr,
-                state.dmacr,
-                state.debug,
-                state.int_enabled,
-                state.int_level,
-                state.read_fifo.into(),
-                state.ilpr,
-                state.ibrd,
-                state.fbrd,
-                state.ifl,
-                state.read_count,
-                state.read_trigger,
-            )
-        } else {
+        ) = {
             (
                 0x90,
                 0,
@@ -189,7 +167,6 @@ impl Pl011 {
             read_trigger,
             irq,
             out,
-            timestamp,
         }
     }
 
@@ -299,48 +276,12 @@ impl Pl011 {
                     return Err(Error::DmaNotImplemented);
                 }
             }
-            UARTDEBUG => {
-                self.debug = val;
-                self.handle_debug();
-            }
             off => {
                 debug!("PL011: Bad write offset, offset: {}", off);
                 return Err(Error::BadWriteOffset(off));
             }
         }
         Ok(())
-    }
-
-    fn handle_debug(&self) {
-        let elapsed = self.timestamp.elapsed();
-
-        match self.debug {
-            0x00..=0x1f => warn!(
-                "[Debug I/O port: Firmware code: 0x{:x}] {}.{:>06} seconds",
-                self.debug,
-                elapsed.as_secs(),
-                elapsed.as_micros()
-            ),
-            0x20..=0x3f => warn!(
-                "[Debug I/O port: Bootloader code: 0x{:x}] {}.{:>06} seconds",
-                self.debug,
-                elapsed.as_secs(),
-                elapsed.as_micros()
-            ),
-            0x40..=0x5f => warn!(
-                "[Debug I/O port: Kernel code: 0x{:x}] {}.{:>06} seconds",
-                self.debug,
-                elapsed.as_secs(),
-                elapsed.as_micros()
-            ),
-            0x60..=0x7f => warn!(
-                "[Debug I/O port: Userspace code: 0x{:x}] {}.{:>06} seconds",
-                self.debug,
-                elapsed.as_secs(),
-                elapsed.as_micros()
-            ),
-            _ => {}
-        }
     }
 
     fn trigger_interrupt(&mut self) -> result::Result<(), io::Error> {
