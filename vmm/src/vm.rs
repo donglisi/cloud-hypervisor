@@ -205,12 +205,6 @@ pub enum Error {
     #[error("Invalid NUMA configuration")]
     InvalidNumaConfig,
 
-    #[error("Cannot create seccomp filter: {0}")]
-    CreateSeccompFilter(#[source] seccompiler::Error),
-
-    #[error("Cannot apply seccomp filter: {0}")]
-    ApplySeccompFilter(#[source] seccompiler::Error),
-
     #[error("Failed resizing a memory zone")]
     ResizeZone,
 
@@ -708,25 +702,7 @@ impl Vm {
     ) -> Result<Arc<dyn hypervisor::Vm>> {
         hypervisor.check_required_extensions().unwrap();
 
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "tdx")] {
-                // Passing KVM_X86_TDX_VM: 1 if tdx_enabled is true
-                // Otherwise KVM_X86_LEGACY_VM: 0
-                // value of tdx_enabled is mapped to KVM_X86_TDX_VM or KVM_X86_LEGACY_VM
-                let vm = hypervisor
-                    .create_vm_with_type(u64::from(tdx_enabled))
-                    .unwrap();
-            } else if #[cfg(feature = "sev_snp")] {
-                // Passing SEV_SNP_ENABLED: 1 if sev_snp_enabled is true
-                // Otherwise SEV_SNP_DISABLED: 0
-                // value of sev_snp_enabled is mapped to SEV_SNP_ENABLED for true or SEV_SNP_DISABLED for false
-                let vm = hypervisor
-                    .create_vm_with_type(u64::from(sev_snp_enabled))
-                    .unwrap();
-            } else {
-                let vm = hypervisor.create_vm().unwrap();
-            }
-        }
+        let vm = hypervisor.create_vm().unwrap();
 
         #[cfg(target_arch = "x86_64")]
         {

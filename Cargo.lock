@@ -1800,7 +1800,6 @@ dependencies = [
  "arc-swap",
  "arch",
  "bitflags 2.4.1",
- "cfg-if",
  "clap",
  "devices",
  "epoll",
@@ -1815,7 +1814,6 @@ dependencies = [
  "once_cell",
  "option_parser",
  "range_map_vec",
- "seccompiler",
  "serde",
  "serde_json",
  "serial_buffer",
@@ -1829,7 +1827,6 @@ dependencies = [
  "vm-memory",
  "vm-migration",
  "vmm-sys-util",
- "zbus",
  "zerocopy",
 ]
 

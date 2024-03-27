@@ -150,12 +150,6 @@ pub enum Error {
     #[error("Requested vCPUs exceed maximum")]
     DesiredVCpuCountExceedsMax,
 
-    #[error("Cannot create seccomp filter: {0}")]
-    CreateSeccompFilter(#[source] seccompiler::Error),
-
-    #[error("Cannot apply seccomp filter: {0}")]
-    ApplySeccompFilter(#[source] seccompiler::Error),
-
     #[error("Error starting vCPU after restore: {0}")]
     StartRestoreVcpu(#[source] anyhow::Error),
 

@@ -124,14 +124,6 @@ pub enum Error {
     #[error("Error shutting down VMM: {0:?}")]
     VmmShutdown(VmError),
 
-    /// Cannot create seccomp filter
-    #[error("Error creating seccomp filter: {0}")]
-    CreateSeccompFilter(seccompiler::Error),
-
-    /// Cannot apply seccomp filter
-    #[error("Error applying seccomp filter: {0}")]
-    ApplySeccompFilter(seccompiler::Error),
-
     /// Error creating API server
     #[error("Error creating API server {0:?}")]
     CreateApiServer(micro_http::ServerError),

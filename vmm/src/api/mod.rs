@@ -117,12 +117,6 @@ pub enum ApiError {
     /// The device could not be removed from the VM.
     VmRemoveDevice(VmError),
 
-    /// Cannot create seccomp filter
-    CreateSeccompFilter(seccompiler::Error),
-
-    /// Cannot apply seccomp filter
-    ApplySeccompFilter(seccompiler::Error),
-
     /// The disk could not be added to the VM.
     VmAddDisk(VmError),
 
@@ -177,8 +171,6 @@ impl Display for ApiError {
             VmAddDevice(vm_error) => write!(f, "{}", vm_error),
             VmAddUserDevice(vm_error) => write!(f, "{}", vm_error),
             VmRemoveDevice(vm_error) => write!(f, "{}", vm_error),
-            CreateSeccompFilter(seccomp_error) => write!(f, "{}", seccomp_error),
-            ApplySeccompFilter(seccomp_error) => write!(f, "{}", seccomp_error),
             VmAddDisk(vm_error) => write!(f, "{}", vm_error),
             VmAddFs(vm_error) => write!(f, "{}", vm_error),
             VmAddPmem(vm_error) => write!(f, "{}", vm_error),
