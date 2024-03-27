@@ -32,7 +32,6 @@ use crate::memory_manager::{
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::migration::url_to_file;
 use crate::GuestMemoryMmap;
-use anyhow::anyhow;
 use arch::get_host_cpu_phys_bits;
 #[cfg(target_arch = "x86_64")]
 use arch::layout::{KVM_IDENTITY_MAP_START, KVM_TSS_START};
@@ -72,10 +71,7 @@ use vm_device::Bus;
 #[cfg(feature = "tdx")]
 use vm_memory::{Address, ByteValued, GuestMemoryRegion, ReadVolatile};
 use vm_memory::{
-    Bytes, GuestAddress, GuestAddressSpace, GuestMemory, GuestMemoryAtomic, WriteVolatile,
-};
-use vm_migration::{
-    protocol::MemoryRangeTable, MigratableError,
+    Bytes, GuestAddress, GuestAddressSpace, GuestMemory, GuestMemoryAtomic,
 };
 use vmm_sys_util::eventfd::EventFd;
 
@@ -150,38 +146,11 @@ pub enum Error {
     #[error("Error from CPU manager: {0}")]
     CpuManager(#[source] cpu::Error),
 
-    #[error("Cannot pause devices: {0}")]
-    PauseDevices(#[source] MigratableError),
-
-    #[error("Cannot resume devices: {0}")]
-    ResumeDevices(#[source] MigratableError),
-
-    #[error("Cannot pause CPUs: {0}")]
-    PauseCpus(#[source] MigratableError),
-
-    #[error("Cannot resume cpus: {0}")]
-    ResumeCpus(#[source] MigratableError),
-
-    #[error("Cannot pause VM: {0}")]
-    Pause(#[source] MigratableError),
-
-    #[error("Cannot resume VM: {0}")]
-    Resume(#[source] MigratableError),
-
     #[error("Memory manager error: {0:?}")]
     MemoryManager(MemoryManagerError),
 
     #[error("Eventfd write error: {0}")]
     EventfdError(#[source] std::io::Error),
-
-    #[error("Cannot snapshot VM: {0}")]
-    Snapshot(#[source] MigratableError),
-
-    #[error("Cannot restore VM: {0}")]
-    Restore(#[source] MigratableError),
-
-    #[error("Cannot send VM snapshot: {0}")]
-    SnapshotSend(#[source] MigratableError),
 
     #[error("Invalid restore source URL")]
     InvalidRestoreSourceUrl,
@@ -1439,48 +1408,6 @@ impl Vm {
             .try_read()
             .map_err(|_| Error::PoisonedState)
             .map(|state| *state)
-    }
-
-    pub fn send_memory_regions<F>(
-        &mut self,
-        ranges: &MemoryRangeTable,
-        fd: &mut F,
-    ) -> std::result::Result<(), MigratableError>
-    where
-        F: WriteVolatile,
-    {
-        let guest_memory = self.memory_manager.lock().as_ref().unwrap().guest_memory();
-        let mem = guest_memory.memory();
-
-        for range in ranges.regions() {
-            let mut offset: u64 = 0;
-            // Here we are manually handling the retry in case we can't the
-            // whole region at once because we can't use the implementation
-            // from vm-memory::GuestMemory of write_all_to() as it is not
-            // following the correct behavior. For more info about this issue
-            // see: https://github.com/rust-vmm/vm-memory/issues/174
-            loop {
-                let bytes_written = mem
-                    .write_volatile_to(
-                        GuestAddress(range.gpa + offset),
-                        fd,
-                        (range.length - offset) as usize,
-                    )
-                    .map_err(|e| {
-                        MigratableError::MigrateSend(anyhow!(
-                            "Error transferring memory to socket: {}",
-                            e
-                        ))
-                    })?;
-                offset += bytes_written as u64;
-
-                if offset == range.length {
-                    break;
-                }
-            }
-        }
-
-        Ok(())
     }
 
     pub fn device_tree(&self) -> Arc<Mutex<DeviceTree>> {
