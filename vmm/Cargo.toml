@@ -18,7 +18,6 @@ clap = "4.4.7"
 devices = { path = "../devices" }
 epoll = "4.3.3"
 futures = { version = "0.3.30", optional = true }
-hex = { version = "0.4.3", optional = true }
 hypervisor = { path = "../hypervisor" }
 libc = "0.2.153"
 linux-loader = { version = "0.11.0", features = ["elf", "bzimage", "pe"] }
