@@ -32,7 +32,6 @@ use crate::memory_manager::MemoryManager;
 #[cfg(target_arch = "x86_64")]
 use crate::vm::physical_bits;
 use crate::GuestMemoryMmap;
-use crate::CPU_MANAGER_SNAPSHOT_ID;
 use acpi_tables::{aml, sdt::Sdt, Aml};
 use anyhow::anyhow;
 #[cfg(all(target_arch = "aarch64", feature = "guest_debug"))]
@@ -65,7 +64,7 @@ use hypervisor::kvm::kvm_ioctls::Cap;
 use hypervisor::kvm::{TdxExitDetails, TdxExitStatus};
 #[cfg(target_arch = "x86_64")]
 use hypervisor::CpuVendor;
-use hypervisor::{CpuState, HypervisorCpuError, HypervisorType, VmExit, VmOps};
+use hypervisor::{HypervisorCpuError, HypervisorType, VmExit, VmOps};
 use libc::{c_void, siginfo_t};
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use linux_loader::elf::Elf64_Nhdr;
@@ -86,8 +85,7 @@ use vm_memory::ByteValued;
 use vm_memory::{Bytes, GuestAddressSpace};
 use vm_memory::{GuestAddress, GuestMemoryAtomic};
 use vm_migration::{
-    snapshot_from_id, Migratable, MigratableError, Pausable, Snapshot, SnapshotData, Snapshottable,
-    Transportable,
+    MigratableError, Pausable, Snapshottable,
 };
 use vmm_sys_util::eventfd::EventFd;
 use vmm_sys_util::signal::{register_signal_handler, SIGRTMIN};
@@ -318,7 +316,6 @@ pub struct Vcpu {
     id: u8,
     #[cfg(target_arch = "aarch64")]
     mpidr: u64,
-    saved_state: Option<CpuState>,
     #[cfg(target_arch = "x86_64")]
     vendor: CpuVendor,
 }
@@ -348,7 +345,6 @@ impl Vcpu {
             id,
             #[cfg(target_arch = "aarch64")]
             mpidr: 0,
-            saved_state: None,
             #[cfg(target_arch = "x86_64")]
             vendor: cpu_vendor,
         })
@@ -448,19 +444,6 @@ impl Pausable for Vcpu {}
 impl Snapshottable for Vcpu {
     fn id(&self) -> String {
         self.id.to_string()
-    }
-
-    fn snapshot(&mut self) -> std::result::Result<Snapshot, MigratableError> {
-        let saved_state = self
-            .vcpu
-            .state()
-            .map_err(|e| MigratableError::Snapshot(anyhow!("Could not get vCPU state {:?}", e)))?;
-
-        self.saved_state = Some(saved_state.clone());
-
-        Ok(Snapshot::from_data(SnapshotData::new_from_state(
-            &saved_state,
-        )?))
     }
 }
 
@@ -761,7 +744,7 @@ impl CpuManager {
         Ok(())
     }
 
-    fn create_vcpu(&mut self, cpu_id: u8, snapshot: Option<Snapshot>) -> Result<Arc<Mutex<Vcpu>>> {
+    fn create_vcpu(&mut self, cpu_id: u8) -> Result<Arc<Mutex<Vcpu>>> {
         info!("Creating vCPU: cpu_id = {}", cpu_id);
 
         #[cfg(target_arch = "x86_64")]
@@ -771,7 +754,7 @@ impl CpuManager {
         #[cfg(target_arch = "aarch64")]
         let x2apic_id = cpu_id as u32;
 
-        let mut vcpu = Vcpu::new(
+        let vcpu = Vcpu::new(
             cpu_id,
             x2apic_id as u8,
             &self.vm,
@@ -779,21 +762,6 @@ impl CpuManager {
             #[cfg(target_arch = "x86_64")]
             self.hypervisor.get_cpu_vendor(),
         )?;
-
-        if let Some(snapshot) = snapshot {
-            // AArch64 vCPUs should be initialized after created.
-            #[cfg(target_arch = "aarch64")]
-            vcpu.init(&self.vm)?;
-
-            let state: CpuState = snapshot.to_state().map_err(|e| {
-                Error::VcpuCreate(anyhow!("Could not get vCPU state from snapshot {:?}", e))
-            })?;
-            vcpu.vcpu
-                .set_state(&state)
-                .map_err(|e| Error::VcpuCreate(anyhow!("Could not set the vCPU state {:?}", e)))?;
-
-            vcpu.saved_state = Some(state);
-        }
 
         let vcpu = Arc::new(Mutex::new(vcpu));
 
@@ -855,7 +823,6 @@ impl CpuManager {
     fn create_vcpus(
         &mut self,
         desired_vcpus: u8,
-        snapshot: Option<Snapshot>,
     ) -> Result<Vec<Arc<Mutex<Vcpu>>>> {
         let mut vcpus: Vec<Arc<Mutex<Vcpu>>> = vec![];
         info!(
@@ -873,10 +840,7 @@ impl CpuManager {
         // Only create vCPUs in excess of all the allocated vCPUs.
         for cpu_id in self.vcpus.len() as u8..desired_vcpus {
             vcpus.push(self.create_vcpu(
-                cpu_id,
-                // TODO: The special format of the CPU id can be removed once
-                // ready to break live upgrade.
-                snapshot_from_id(snapshot.as_ref(), cpu_id.to_string().as_str()),
+                cpu_id
             )?);
         }
 
@@ -1219,9 +1183,8 @@ impl CpuManager {
 
     pub fn create_boot_vcpus(
         &mut self,
-        snapshot: Option<Snapshot>,
     ) -> Result<Vec<Arc<Mutex<Vcpu>>>> {
-        self.create_vcpus(self.boot_vcpus(), snapshot)
+        self.create_vcpus(self.boot_vcpus())
     }
 
     // Starts all the vCPUs that the VM is booting with. Blocks until all vCPUs are running.
@@ -1253,7 +1216,7 @@ impl CpuManager {
 
         match desired_vcpus.cmp(&self.present_vcpus()) {
             cmp::Ordering::Greater => {
-                let vcpus = self.create_vcpus(desired_vcpus, None)?;
+                let vcpus = self.create_vcpus(desired_vcpus)?;
                 for vcpu in vcpus {
                     self.configure_vcpu(vcpu, None)?
                 }
@@ -2223,27 +2186,6 @@ impl Pausable for CpuManager {
         Ok(())
     }
 }
-
-impl Snapshottable for CpuManager {
-    fn id(&self) -> String {
-        CPU_MANAGER_SNAPSHOT_ID.to_string()
-    }
-
-    fn snapshot(&mut self) -> std::result::Result<Snapshot, MigratableError> {
-        let mut cpu_manager_snapshot = Snapshot::default();
-
-        // The CpuManager snapshot is a collection of all vCPUs snapshots.
-        for vcpu in &self.vcpus {
-            let mut vcpu = vcpu.lock().unwrap();
-            cpu_manager_snapshot.add_snapshot(vcpu.id(), vcpu.snapshot()?);
-        }
-
-        Ok(cpu_manager_snapshot)
-    }
-}
-
-impl Transportable for CpuManager {}
-impl Migratable for CpuManager {}
 
 #[cfg(feature = "guest_debug")]
 impl Debuggable for CpuManager {

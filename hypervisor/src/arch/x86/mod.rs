@@ -252,10 +252,8 @@ pub struct FpuState {
     pub mxcsr: u32,
 }
 
-#[serde_with::serde_as]
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone,)]
 pub struct LapicState {
-    #[serde_as(as = "[_; 1024usize]")]
     pub(crate) regs: [::std::os::raw::c_char; 1024usize],
 }
 
@@ -312,10 +310,8 @@ pub struct MsrEntry {
     pub data: u64,
 }
 
-#[serde_with::serde_as]
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct XsaveState {
-    #[serde_as(as = "[_; 1024usize]")]
     pub region: [u32; 1024usize],
 }
 

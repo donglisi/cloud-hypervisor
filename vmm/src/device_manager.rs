@@ -51,7 +51,6 @@ use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::path::PathBuf;
 use std::result;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 use vm_allocator::{SystemAllocator};
 use vm_device::interrupt::{
     InterruptIndex, InterruptManager, LegacyIrqGroupConfig, MsiIrqGroupConfig,
@@ -432,9 +431,6 @@ pub struct DeviceManager {
     acpi_address: GuestAddress,
 
     selected_segment: usize,
-
-    // Start time of the VM
-    timestamp: Instant,
 }
 
 impl DeviceManager {
@@ -447,7 +443,6 @@ impl DeviceManager {
         memory_manager: Arc<Mutex<MemoryManager>>,
         cpu_manager: Arc<Mutex<CpuManager>>,
         exit_evt: EventFd,
-        timestamp: Instant,
         dynamic: bool,
     ) -> DeviceManagerResult<Arc<Mutex<Self>>> {
         let device_tree = Arc::new(Mutex::new(DeviceTree::new()));
@@ -521,7 +516,6 @@ impl DeviceManager {
             serial_pty: None,
             serial_manager: None,
             original_termios_opt: Arc::new(Mutex::new(None)),
-            timestamp,
         };
 
         let device_manager = Arc::new(Mutex::new(device_manager));
@@ -577,13 +571,6 @@ impl DeviceManager {
                     .map_err(DeviceManagerError::BusError)?;
             }
         }
-
-        #[cfg(target_arch = "x86_64")]
-        self.add_legacy_devices(
-            self.reset_evt
-                .try_clone()
-                .map_err(DeviceManagerError::EventFd)?,
-        )?;
 
         self.original_termios_opt = original_termios_opt;
 

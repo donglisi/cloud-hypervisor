@@ -32,9 +32,6 @@ use crate::memory_manager::{
 #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
 use crate::migration::url_to_file;
 use crate::GuestMemoryMmap;
-use crate::{
-    CPU_MANAGER_SNAPSHOT_ID,
-};
 use anyhow::anyhow;
 use arch::get_host_cpu_phys_bits;
 #[cfg(target_arch = "x86_64")]
@@ -70,7 +67,6 @@ use std::num::Wrapping;
 use std::ops::Deref;
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Instant;
 use std::{result, str, thread};
 use thiserror::Error;
 use vm_device::Bus;
@@ -81,7 +77,7 @@ use vm_memory::{
 };
 use vm_migration::protocol::{Request, Response, Status};
 use vm_migration::{
-    protocol::MemoryRangeTable, snapshot_from_id, MigratableError, Snapshot,
+    protocol::MemoryRangeTable, MigratableError, Snapshot,
 };
 use vmm_sys_util::eventfd::EventFd;
 use vmm_sys_util::sock_ctrl_msg::ScmSocket;
@@ -445,7 +441,6 @@ impl Vm {
         reset_evt: EventFd,
         #[cfg(feature = "guest_debug")] vm_debug_evt: EventFd,
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
-        timestamp: Instant,
         serial_pty: Option<PtyPair>,
         original_termios: Arc<Mutex<Option<termios>>>,
         snapshot: Option<Snapshot>,
@@ -540,7 +535,7 @@ impl Vm {
         cpu_manager
             .lock()
             .unwrap()
-            .create_boot_vcpus(snapshot_from_id(snapshot.as_ref(), CPU_MANAGER_SNAPSHOT_ID))
+            .create_boot_vcpus()
             .map_err(Error::CpuManager)?;
 
         // This initial SEV-SNP configuration must be done immediately after
@@ -565,7 +560,6 @@ impl Vm {
             memory_manager.clone(),
             cpu_manager.clone(),
             exit_evt.try_clone().map_err(Error::EventFdClone)?,
-            timestamp,
             dynamic,
         )
         .map_err(Error::DeviceManager)?;
@@ -632,22 +626,6 @@ impl Vm {
         original_termios: Arc<Mutex<Option<termios>>>,
         snapshot: Option<Snapshot>,
     ) -> Result<Self> {
-        let timestamp = Instant::now();
-
-        #[cfg(feature = "tdx")]
-        let tdx_enabled = if snapshot.is_some() {
-            false
-        } else {
-            vm_config.lock().unwrap().is_tdx_enabled()
-        };
-
-        #[cfg(feature = "sev_snp")]
-        let sev_snp_enabled = if snapshot.is_some() {
-            false
-        } else {
-            vm_config.lock().unwrap().is_sev_snp_enabled()
-        };
-
         let vm = Self::create_hypervisor_vm(
             &hypervisor,
             #[cfg(feature = "tdx")]
@@ -684,7 +662,6 @@ impl Vm {
             #[cfg(feature = "guest_debug")]
             vm_debug_evt,
             hypervisor,
-            timestamp,
             serial_pty,
             original_termios,
             snapshot,
@@ -1559,113 +1536,6 @@ impl Vm {
 
     pub fn device_tree(&self) -> Arc<Mutex<DeviceTree>> {
         self.device_manager.lock().unwrap().device_tree()
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    pub fn power_button(&self) -> Result<()> {
-        return self
-            .device_manager
-            .lock()
-            .unwrap()
-            .notify_power_button()
-            .map_err(Error::PowerButton);
-    }
-
-    #[cfg(feature = "guest_debug")]
-    pub fn debug_request(
-        &mut self,
-        gdb_request: &GdbRequestPayload,
-        cpu_id: usize,
-    ) -> Result<GdbResponsePayload> {
-        use GdbRequestPayload::*;
-        match gdb_request {
-            SetSingleStep(single_step) => {
-                self.set_guest_debug(cpu_id, &[], *single_step)
-                    .map_err(Error::Debug)?;
-            }
-            SetHwBreakPoint(addrs) => {
-                self.set_guest_debug(cpu_id, addrs, false)
-                    .map_err(Error::Debug)?;
-            }
-            Pause => {
-                self.debug_pause().map_err(Error::Debug)?;
-            }
-            Resume => {
-                self.debug_resume().map_err(Error::Debug)?;
-            }
-            ReadRegs => {
-                let regs = self.read_regs(cpu_id).map_err(Error::Debug)?;
-                return Ok(GdbResponsePayload::RegValues(Box::new(regs)));
-            }
-            WriteRegs(regs) => {
-                self.write_regs(cpu_id, regs).map_err(Error::Debug)?;
-            }
-            ReadMem(vaddr, len) => {
-                let guest_memory = self.memory_manager.lock().as_ref().unwrap().guest_memory();
-                let mem = self
-                    .read_mem(&guest_memory, cpu_id, *vaddr, *len)
-                    .map_err(Error::Debug)?;
-                return Ok(GdbResponsePayload::MemoryRegion(mem));
-            }
-            WriteMem(vaddr, data) => {
-                let guest_memory = self.memory_manager.lock().as_ref().unwrap().guest_memory();
-                self.write_mem(&guest_memory, cpu_id, vaddr, data)
-                    .map_err(Error::Debug)?;
-            }
-            ActiveVcpus => {
-                let active_vcpus = self.active_vcpus();
-                return Ok(GdbResponsePayload::ActiveVcpus(active_vcpus));
-            }
-        }
-        Ok(GdbResponsePayload::CommandComplete)
-    }
-
-    #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
-    fn get_dump_state(
-        &mut self,
-        destination_url: &str,
-    ) -> std::result::Result<DumpState, GuestDebuggableError> {
-        let nr_cpus = self.config.lock().unwrap().cpus.boot_vcpus as u32;
-        let elf_note_size = self.get_note_size(NoteDescType::ElfAndVmm, nr_cpus) as isize;
-        let mut elf_phdr_num = 1;
-        let elf_sh_info = 0;
-        let coredump_file_path = url_to_file(destination_url)?;
-        let mapping_num = self.memory_manager.lock().unwrap().num_guest_ram_mappings();
-
-        if mapping_num < UINT16_MAX - 2 {
-            elf_phdr_num += mapping_num as u16;
-        } else {
-            panic!("mapping num beyond 65535 not supported");
-        }
-        let coredump_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(coredump_file_path)
-            .map_err(|e| GuestDebuggableError::Coredump(e.into()))?;
-
-        let mem_offset = self.coredump_get_mem_offset(elf_phdr_num, elf_note_size);
-        let mem_data = self
-            .memory_manager
-            .lock()
-            .unwrap()
-            .coredump_memory_regions(mem_offset);
-
-        Ok(DumpState {
-            elf_note_size,
-            elf_phdr_num,
-            elf_sh_info,
-            mem_offset,
-            mem_info: Some(mem_data),
-            file: Some(coredump_file),
-        })
-    }
-
-    #[cfg(all(target_arch = "x86_64", feature = "guest_debug"))]
-    fn coredump_get_mem_offset(&self, phdr_num: u16, note_size: isize) -> u64 {
-        size_of::<elf::Elf64_Ehdr>() as u64
-            + note_size as u64
-            + size_of::<elf::Elf64_Phdr>() as u64 * phdr_num as u64
     }
 }
 
