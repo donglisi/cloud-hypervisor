@@ -112,7 +112,6 @@ dependencies = [
  "versionize_derive",
  "vm-fdt",
  "vm-memory",
- "vm-migration",
  "vmm-sys-util",
 ]
 

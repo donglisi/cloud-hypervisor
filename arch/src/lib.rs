@@ -20,7 +20,6 @@ use std::sync::Arc;
 use thiserror::Error;
 use versionize::{VersionMap, Versionize, VersionizeError, VersionizeResult};
 use versionize_derive::Versionize;
-use vm_migration::VersionMapped;
 
 type GuestMemoryMmap = vm_memory::GuestMemoryMmap<vm_memory::bitmap::AtomicBitmap>;
 type GuestRegionMmap = vm_memory::GuestRegionMmap<vm_memory::bitmap::AtomicBitmap>;
@@ -71,8 +70,6 @@ pub enum RegionType {
     /// memory ranges in a specific address range.
     Reserved,
 }
-
-impl VersionMapped for RegionType {}
 
 /// Module for aarch64 related functionality.
 #[cfg(target_arch = "aarch64")]
