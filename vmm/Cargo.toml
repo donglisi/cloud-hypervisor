@@ -17,7 +17,6 @@ bitflags = "2.4.1"
 clap = "4.4.7"
 devices = { path = "../devices" }
 epoll = "4.3.3"
-flume = "0.10.14"
 futures = { version = "0.3.30", optional = true }
 hex = { version = "0.4.3", optional = true }
 hypervisor = { path = "../hypervisor" }
