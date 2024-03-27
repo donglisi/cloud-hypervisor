@@ -565,7 +565,6 @@ impl Vm {
             memory_manager.clone(),
             cpu_manager.clone(),
             exit_evt.try_clone().map_err(Error::EventFdClone)?,
-            reset_evt,
             timestamp,
             dynamic,
         )

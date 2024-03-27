@@ -34,7 +34,7 @@ use devices::ioapic;
 #[cfg(target_arch = "aarch64")]
 use devices::legacy::Pl011;
 use devices::{
-    interrupt_controller, interrupt_controller::InterruptController, AcpiNotificationFlags,
+    interrupt_controller, interrupt_controller::InterruptController,
 };
 use libc::{
     cfmakeraw, isatty, tcgetattr, tcsetattr, termios,
@@ -447,7 +447,6 @@ impl DeviceManager {
         memory_manager: Arc<Mutex<MemoryManager>>,
         cpu_manager: Arc<Mutex<CpuManager>>,
         exit_evt: EventFd,
-        reset_evt: EventFd,
         timestamp: Instant,
         dynamic: bool,
     ) -> DeviceManagerResult<Arc<Mutex<Self>>> {
