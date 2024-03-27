@@ -795,14 +795,6 @@ impl RequestHandler for Vmm {
         self.vm_delete()?;
         Ok(())
     }
-
-    fn vm_power_button(&mut self) -> result::Result<(), VmError> {
-        if let Some(ref mut vm) = self.vm {
-            vm.power_button()
-        } else {
-            Err(VmError::VmNotRunning)
-        }
-    }
 }
 
 const CPU_MANAGER_SNAPSHOT_ID: &str = "cpu-manager";

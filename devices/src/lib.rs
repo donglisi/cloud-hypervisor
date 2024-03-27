@@ -12,15 +12,12 @@ extern crate bitflags;
 #[macro_use]
 extern crate log;
 
-pub mod acpi;
 #[cfg(target_arch = "aarch64")]
 pub mod gic;
 pub mod interrupt_controller;
 #[cfg(target_arch = "x86_64")]
 pub mod ioapic;
 pub mod legacy;
-
-pub use self::acpi::{AcpiGedDevice, AcpiPmTimerDevice, AcpiShutdownDevice};
 
 bitflags! {
     pub struct AcpiNotificationFlags: u8 {

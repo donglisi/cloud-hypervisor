@@ -1572,15 +1572,6 @@ impl Vm {
             .map_err(Error::PowerButton);
     }
 
-    #[cfg(target_arch = "aarch64")]
-    pub fn power_button(&self) -> Result<()> {
-        self.device_manager
-            .lock()
-            .unwrap()
-            .notify_power_button()
-            .map_err(Error::PowerButton)
-    }
-
     #[cfg(feature = "guest_debug")]
     pub fn debug_request(
         &mut self,

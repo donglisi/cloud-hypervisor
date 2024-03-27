@@ -281,8 +281,6 @@ pub trait RequestHandler {
     fn vm_delete(&mut self) -> Result<(), VmError>;
 
     fn vmm_shutdown(&mut self) -> Result<(), VmError>;
-
-    fn vm_power_button(&mut self) -> Result<(), VmError>;
 }
 
 /// It would be nice if we could pass around an object like this:
@@ -525,39 +523,6 @@ impl ApiAction for VmInfo {
             ApiResponsePayload::VmInfo(info) => Ok(info),
             _ => Err(ApiError::ResponsePayloadType),
         }
-    }
-}
-
-pub struct VmPowerButton;
-
-impl ApiAction for VmPowerButton {
-    type RequestBody = ();
-    type ResponseBody = Option<Body>;
-
-    fn request(&self, _: Self::RequestBody, response_sender: Sender<ApiResponse>) -> ApiRequest {
-        Box::new(move |vmm| {
-            info!("API request event: VmPowerButton");
-
-            let response = vmm
-                .vm_power_button()
-                .map_err(ApiError::VmPowerButton)
-                .map(|_| ApiResponsePayload::Empty);
-
-            response_sender
-                .send(response)
-                .map_err(VmmError::ApiResponseSend)?;
-
-            Ok(false)
-        })
-    }
-
-    fn send(
-        &self,
-        api_evt: EventFd,
-        api_sender: Sender<ApiRequest>,
-        data: Self::RequestBody,
-    ) -> ApiResult<Self::ResponseBody> {
-        get_response_body(self, api_evt, api_sender, data)
     }
 }
 

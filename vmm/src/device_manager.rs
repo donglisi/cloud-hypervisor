@@ -396,9 +396,6 @@ pub struct DeviceManager {
     #[cfg(target_arch = "aarch64")]
     cmdline_additions: Vec<String>,
 
-    // ACPI GED notification device
-    ged_notification_device: Option<Arc<Mutex<devices::AcpiGedDevice>>>,
-
     // VM configuration
     config: Arc<Mutex<VmConfig>>,
 
@@ -428,7 +425,6 @@ pub struct DeviceManager {
 
     // Exit event
     exit_evt: EventFd,
-    reset_evt: EventFd,
 
     #[cfg(target_arch = "aarch64")]
     id_to_dev_info: HashMap<(DeviceType, String), MmioDeviceInfo>,
@@ -511,7 +507,6 @@ impl DeviceManager {
             interrupt_controller: None,
             #[cfg(target_arch = "aarch64")]
             cmdline_additions: Vec::new(),
-            ged_notification_device: None,
             config,
             memory_manager,
             cpu_manager,
@@ -520,7 +515,6 @@ impl DeviceManager {
             legacy_interrupt_manager: None,
             device_tree,
             exit_evt,
-            reset_evt,
             #[cfg(target_arch = "aarch64")]
             id_to_dev_info: HashMap::new(),
             acpi_address,
@@ -591,21 +585,6 @@ impl DeviceManager {
                 .try_clone()
                 .map_err(DeviceManagerError::EventFd)?,
         )?;
-
-        #[cfg(target_arch = "aarch64")]
-        self.add_legacy_devices(&legacy_interrupt_manager)?;
-
-        {
-            self.ged_notification_device = self.add_acpi_devices(
-                &legacy_interrupt_manager,
-                self.reset_evt
-                    .try_clone()
-                    .map_err(DeviceManagerError::EventFd)?,
-                self.exit_evt
-                    .try_clone()
-                    .map_err(DeviceManagerError::EventFd)?,
-            )?;
-        }
 
         self.original_termios_opt = original_termios_opt;
 
@@ -682,166 +661,6 @@ impl DeviceManager {
             .insert(id.clone(), device_node!(id, interrupt_controller));
 
         Ok(interrupt_controller)
-    }
-
-    fn add_acpi_devices(
-        &mut self,
-        interrupt_manager: &Arc<dyn InterruptManager<GroupConfig = LegacyIrqGroupConfig>>,
-        reset_evt: EventFd,
-        exit_evt: EventFd,
-    ) -> DeviceManagerResult<Option<Arc<Mutex<devices::AcpiGedDevice>>>> {
-        let vcpus_kill_signalled = self
-            .cpu_manager
-            .lock()
-            .unwrap()
-            .vcpus_kill_signalled()
-            .clone();
-        let shutdown_device = Arc::new(Mutex::new(devices::AcpiShutdownDevice::new(
-            exit_evt,
-            reset_evt,
-            vcpus_kill_signalled,
-        )));
-
-        self.bus_devices
-            .push(Arc::clone(&shutdown_device) as Arc<Mutex<dyn BusDevice>>);
-
-        #[cfg(target_arch = "x86_64")]
-        {
-            let shutdown_pio_address: u16 = 0x600;
-
-            self.address_manager
-                .allocator
-                .lock()
-                .unwrap()
-                .allocate_io_addresses(Some(GuestAddress(shutdown_pio_address.into())), 0x8, None)
-                .ok_or(DeviceManagerError::AllocateIoPort)?;
-
-            self.address_manager
-                .io_bus
-                .insert(shutdown_device, shutdown_pio_address.into(), 0x4)
-                .map_err(DeviceManagerError::BusError)?;
-        }
-
-        let ged_irq = self
-            .address_manager
-            .allocator
-            .lock()
-            .unwrap()
-            .allocate_irq()
-            .unwrap();
-        let interrupt_group = interrupt_manager
-            .create_group(LegacyIrqGroupConfig {
-                irq: ged_irq as InterruptIndex,
-            })
-            .map_err(DeviceManagerError::CreateInterruptGroup)?;
-        let ged_address = self
-            .address_manager
-            .allocator
-            .lock()
-            .unwrap()
-            .allocate_platform_mmio_addresses(
-                None,
-                devices::acpi::GED_DEVICE_ACPI_SIZE as u64,
-                None,
-            )
-            .ok_or(DeviceManagerError::AllocateMmioAddress)?;
-        let ged_device = Arc::new(Mutex::new(devices::AcpiGedDevice::new(
-            interrupt_group,
-            ged_irq,
-            ged_address,
-        )));
-        self.address_manager
-            .mmio_bus
-            .insert(
-                ged_device.clone(),
-                ged_address.0,
-                devices::acpi::GED_DEVICE_ACPI_SIZE as u64,
-            )
-            .map_err(DeviceManagerError::BusError)?;
-        self.bus_devices
-            .push(Arc::clone(&ged_device) as Arc<Mutex<dyn BusDevice>>);
-
-        let pm_timer_device = Arc::new(Mutex::new(devices::AcpiPmTimerDevice::new()));
-
-        self.bus_devices
-            .push(Arc::clone(&pm_timer_device) as Arc<Mutex<dyn BusDevice>>);
-
-        #[cfg(target_arch = "x86_64")]
-        {
-            let pm_timer_pio_address: u16 = 0x608;
-
-            self.address_manager
-                .allocator
-                .lock()
-                .unwrap()
-                .allocate_io_addresses(Some(GuestAddress(pm_timer_pio_address.into())), 0x4, None)
-                .ok_or(DeviceManagerError::AllocateIoPort)?;
-
-            self.address_manager
-                .io_bus
-                .insert(pm_timer_device, pm_timer_pio_address.into(), 0x4)
-                .map_err(DeviceManagerError::BusError)?;
-        }
-
-        Ok(Some(ged_device))
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    fn add_legacy_devices(&mut self, _reset_evt: EventFd) -> DeviceManagerResult<()> {
-        // 0x80 debug port
-        let debug_port = Arc::new(Mutex::new(devices::legacy::DebugPort::new(self.timestamp)));
-        self.bus_devices
-            .push(Arc::clone(&debug_port) as Arc<Mutex<dyn BusDevice>>);
-        self.address_manager
-            .io_bus
-            .insert(debug_port, 0x80, 0x1)
-            .map_err(DeviceManagerError::BusError)?;
-
-        Ok(())
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    fn add_legacy_devices(
-        &mut self,
-        interrupt_manager: &Arc<dyn InterruptManager<GroupConfig = LegacyIrqGroupConfig>>,
-    ) -> DeviceManagerResult<()> {
-        // Add a RTC device
-        let rtc_irq = self
-            .address_manager
-            .allocator
-            .lock()
-            .unwrap()
-            .allocate_irq()
-            .unwrap();
-
-        let interrupt_group = interrupt_manager
-            .create_group(LegacyIrqGroupConfig {
-                irq: rtc_irq as InterruptIndex,
-            })
-            .map_err(DeviceManagerError::CreateInterruptGroup)?;
-
-        let rtc_device = Arc::new(Mutex::new(devices::legacy::Rtc::new(interrupt_group)));
-
-        self.bus_devices
-            .push(Arc::clone(&rtc_device) as Arc<Mutex<dyn BusDevice>>);
-
-        let addr = arch::layout::LEGACY_RTC_MAPPED_IO_START;
-
-        self.address_manager
-            .mmio_bus
-            .insert(rtc_device, addr.0, MMIO_LEN)
-            .map_err(DeviceManagerError::BusError)?;
-
-        self.id_to_dev_info.insert(
-            (DeviceType::Rtc, "rtc".to_string()),
-            MmioDeviceInfo {
-                addr: addr.0,
-                len: MMIO_LEN,
-                irq: rtc_irq,
-            },
-        );
-
-        Ok(())
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -1089,20 +908,6 @@ impl DeviceManager {
         self.cmdline_additions.as_slice()
     }
 
-    pub fn notify_hotplug(
-        &self,
-        _notification_type: AcpiNotificationFlags,
-    ) -> DeviceManagerResult<()> {
-        return self
-            .ged_notification_device
-            .as_ref()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .notify(_notification_type)
-            .map_err(DeviceManagerError::HotPlugNotification);
-    }
-
     pub fn counters(&self) -> HashMap<String, HashMap<&'static str, Wrapping<u64>>> {
         let counters = HashMap::new();
 
@@ -1111,33 +916,6 @@ impl DeviceManager {
 
     pub fn device_tree(&self) -> Arc<Mutex<DeviceTree>> {
         self.device_tree.clone()
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    pub fn notify_power_button(&self) -> DeviceManagerResult<()> {
-        self.ged_notification_device
-            .as_ref()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .notify(AcpiNotificationFlags::POWER_BUTTON_CHANGED)
-            .map_err(DeviceManagerError::PowerButtonNotification)
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    pub fn notify_power_button(&self) -> DeviceManagerResult<()> {
-        // There are two use cases:
-        // 1. Users will use direct kernel boot with device tree.
-        // 2. Users will use ACPI+UEFI boot.
-
-        return self
-            .ged_notification_device
-            .as_ref()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .notify(AcpiNotificationFlags::POWER_BUTTON_CHANGED)
-            .map_err(DeviceManagerError::PowerButtonNotification);
     }
 }
 
@@ -1304,13 +1082,6 @@ impl Aml for DeviceManager {
             // Add tpm device
             TpmDevice {}.to_aml_bytes(sink);
         }
-
-        self.ged_notification_device
-            .as_ref()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .to_aml_bytes(sink)
     }
 }
 

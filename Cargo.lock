@@ -967,28 +967,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mshv-bindings"
-version = "0.1.1"
-source = "git+https://github.com/rust-vmm/mshv?branch=main#9d0c11fe9fedfbcf56a5d62fbf4bad80cdf91340"
-dependencies = [
- "libc",
- "serde",
- "serde_derive",
- "vmm-sys-util",
- "zerocopy",
-]
-
-[[package]]
-name = "mshv-ioctls"
-version = "0.1.1"
-source = "git+https://github.com/rust-vmm/mshv?branch=main#9d0c11fe9fedfbcf56a5d62fbf4bad80cdf91340"
-dependencies = [
- "libc",
- "mshv-bindings",
- "vmm-sys-util",
-]
-
-[[package]]
 name = "nix"
 version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1608,8 +1586,6 @@ dependencies = [
  "kvm-ioctls",
  "libc",
  "log",
- "mshv-bindings",
- "mshv-ioctls",
  "thiserror",
  "vfio-bindings",
  "vm-memory",
