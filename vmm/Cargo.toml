@@ -18,7 +18,7 @@ epoll = "4.3.3"
 hypervisor = { path = "../hypervisor" }
 libc = "0.2.153"
 linux-loader = { version = "0.11.0", features = ["elf", "bzimage", "pe"] }
-log = "0.4.20"
+log = "0.4.21"
 micro_http = { git = "https://github.com/firecracker-microvm/micro-http", branch = "main" }
 option_parser = { path = "../option_parser" }
 serde = { version = "1.0.196", features = ["rc", "derive"] }
