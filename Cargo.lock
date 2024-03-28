@@ -3,14 +3,6 @@
 version = 3
 
 [[package]]
-name = "acpi_tables"
-version = "0.1.0"
-source = "git+https://github.com/rust-vmm/acpi_tables?branch=main#76e8552f57f76ca918e19c0a7b7480d2fa2c7241"
-dependencies = [
- "zerocopy",
-]
-
-[[package]]
 name = "addr2line"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -475,7 +467,6 @@ dependencies = [
 name = "devices"
 version = "0.1.0"
 dependencies = [
- "acpi_tables",
  "anyhow",
  "arch",
  "bitflags 2.4.1",
