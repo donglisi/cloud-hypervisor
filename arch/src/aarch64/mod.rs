@@ -8,8 +8,6 @@ pub mod fdt;
 pub mod layout;
 /// Module for system registers definition
 pub mod regs;
-/// Module for loading UEFI binary.
-pub mod uefi;
 
 pub use self::fdt::DeviceInfoForFdt;
 use crate::{DeviceType, GuestMemoryMmap, RegionType};

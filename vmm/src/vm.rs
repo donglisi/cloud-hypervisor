@@ -87,10 +87,6 @@ pub enum Error {
     #[error("Cannot load the kernel into memory: {0}")]
     KernelLoad(#[source] linux_loader::loader::Error),
 
-    #[cfg(target_arch = "aarch64")]
-    #[error("Cannot load the UEFI binary in memory: {0:?}")]
-    UefiLoad(arch::aarch64::uefi::Error),
-
     #[error("Cannot load the initramfs into memory")]
     InitramfsLoad,
 
@@ -680,15 +676,6 @@ impl Vm {
     }
 
     #[cfg(target_arch = "aarch64")]
-    fn load_firmware(mut firmware: &File, memory_manager: Arc<Mutex<MemoryManager>>) -> Result<()> {
-        let uefi_flash = memory_manager.lock().as_ref().unwrap().uefi_flash();
-        let mem = uefi_flash.memory();
-        arch::aarch64::uefi::load_uefi(mem.deref(), arch::layout::UEFI_START, &mut firmware)
-            .map_err(Error::UefiLoad)?;
-        Ok(())
-    }
-
-    #[cfg(target_arch = "aarch64")]
     fn load_kernel(
         firmware: Option<File>,
         kernel: Option<File>,
@@ -709,7 +696,6 @@ impl Vm {
                     // If failed, retry to load it as UEFI binary.
                     // As the UEFI binary is formatless, it must be the last option to try.
                     Err(linux_loader::loader::Error::Pe(InvalidImageMagicNumber)) => {
-                        Self::load_firmware(&kernel, memory_manager)?;
                         arch::layout::UEFI_START
                     }
                     Err(e) => {
@@ -717,37 +703,10 @@ impl Vm {
                     }
                 }
             }
-            (Some(firmware), None) => {
-                Self::load_firmware(&firmware, memory_manager)?;
-                arch::layout::UEFI_START
-            }
             _ => return Err(Error::InvalidPayload),
         };
 
         Ok(EntryPoint { entry_addr })
-    }
-
-    #[cfg(feature = "igvm")]
-    fn load_igvm(
-        igvm: File,
-        memory_manager: Arc<Mutex<MemoryManager>>,
-        cpu_manager: Arc<Mutex<cpu::CpuManager>>,
-    ) -> Result<EntryPoint> {
-        let res = igvm_loader::load_igvm(&igvm, memory_manager, cpu_manager.clone(), "")
-            .map_err(Error::IgvmLoad)?;
-
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "sev_snp")] {
-                let entry_point = if cpu_manager.lock().unwrap().sev_snp_enabled() {
-                    EntryPoint { entry_addr: vm_memory::GuestAddress(res.vmsa_gpa) }
-                } else {
-                    EntryPoint {entry_addr: vm_memory::GuestAddress(res.vmsa.rip) }
-                };
-            } else {
-               let entry_point = EntryPoint { entry_addr: vm_memory::GuestAddress(res.vmsa.rip) };
-            }
-        };
-        Ok(entry_point)
     }
 
     #[cfg(target_arch = "x86_64")]
