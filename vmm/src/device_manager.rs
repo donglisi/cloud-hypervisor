@@ -20,9 +20,6 @@ use crate::interrupt::MsiInterruptManager;
 use crate::memory_manager::{Error as MemoryManagerError, MemoryManager, MEMORY_MANAGER_ACPI_SIZE};
 use crate::serial_manager::{Error as SerialManagerError, SerialManager};
 use crate::device_node;
-use acpi_tables::sdt::GenericAddress;
-use acpi_tables::{aml, Aml};
-use arch::layout;
 #[cfg(target_arch = "x86_64")]
 use arch::layout::{APIC_START, IOAPIC_SIZE, IOAPIC_START};
 #[cfg(target_arch = "aarch64")]
@@ -56,9 +53,6 @@ use vm_device::interrupt::{
     InterruptIndex, InterruptManager, LegacyIrqGroupConfig, MsiIrqGroupConfig,
 };
 use vm_device::{Bus, BusDevice};
-#[cfg(target_arch = "aarch64")]
-use vm_memory::Address;
-use vm_memory::GuestAddress;
 use vmm_sys_util::eventfd::EventFd;
 #[cfg(target_arch = "x86_64")]
 use {devices::legacy::Serial};
@@ -355,14 +349,6 @@ impl Clone for PtyPair {
     }
 }
 
-#[derive(Default)]
-pub struct AcpiPlatformAddresses {
-    pub pm_timer_address: Option<GenericAddress>,
-    pub reset_reg_address: Option<GenericAddress>,
-    pub sleep_control_reg_address: Option<GenericAddress>,
-    pub sleep_status_reg_address: Option<GenericAddress>,
-}
-
 pub struct DeviceManager {
     // Manage address space related to devices
     address_manager: Arc<AddressManager>,
@@ -421,8 +407,6 @@ pub struct DeviceManager {
 
     #[cfg(target_arch = "aarch64")]
     id_to_dev_info: HashMap<(DeviceType, String), MmioDeviceInfo>,
-
-    acpi_address: GuestAddress,
 
     selected_segment: usize,
 }
@@ -505,7 +489,6 @@ impl DeviceManager {
             exit_evt,
             #[cfg(target_arch = "aarch64")]
             id_to_dev_info: HashMap::new(),
-            acpi_address,
             selected_segment: 0,
             serial_pty: None,
             serial_manager: None,
@@ -894,172 +877,6 @@ impl DeviceManager {
 
     pub fn device_tree(&self) -> Arc<Mutex<DeviceTree>> {
         self.device_tree.clone()
-    }
-}
-
-struct TpmDevice {}
-
-impl Aml for TpmDevice {
-    fn to_aml_bytes(&self, sink: &mut dyn acpi_tables::AmlSink) {
-        aml::Device::new(
-            "TPM2".into(),
-            vec![
-                &aml::Name::new("_HID".into(), &"MSFT0101"),
-                &aml::Name::new("_STA".into(), &(0xF_usize)),
-                &aml::Name::new(
-                    "_CRS".into(),
-                    &aml::ResourceTemplate::new(vec![&aml::Memory32Fixed::new(
-                        true,
-                        layout::TPM_START.0 as u32,
-                        layout::TPM_SIZE as u32,
-                    )]),
-                ),
-            ],
-        )
-        .to_aml_bytes(sink)
-    }
-}
-
-impl Aml for DeviceManager {
-    fn to_aml_bytes(&self, sink: &mut dyn acpi_tables::AmlSink) {
-        #[cfg(target_arch = "aarch64")]
-        use arch::aarch64::DeviceInfoForFdt;
-
-        let pci_scan_inner: Vec<&dyn Aml> = Vec::new();
-
-        // PCI hotplug controller
-        aml::Device::new(
-            "_SB_.PHPR".into(),
-            vec![
-                &aml::Name::new("_HID".into(), &aml::EISAName::new("PNP0A06")),
-                &aml::Name::new("_STA".into(), &0x0bu8),
-                &aml::Name::new("_UID".into(), &"PCI Hotplug Controller"),
-                &aml::Mutex::new("BLCK".into(), 0),
-                &aml::Name::new(
-                    "_CRS".into(),
-                    &aml::ResourceTemplate::new(vec![&aml::AddressSpace::new_memory(
-                        aml::AddressSpaceCacheable::NotCacheable,
-                        true,
-                        self.acpi_address.0,
-                        self.acpi_address.0 + DEVICE_MANAGER_ACPI_SIZE as u64 - 1,
-                        None,
-                    )]),
-                ),
-                // OpRegion and Fields map MMIO range into individual field values
-                &aml::OpRegion::new(
-                    "PCST".into(),
-                    aml::OpRegionSpace::SystemMemory,
-                    &(self.acpi_address.0 as usize),
-                    &DEVICE_MANAGER_ACPI_SIZE,
-                ),
-                &aml::Field::new(
-                    "PCST".into(),
-                    aml::FieldAccessType::DWord,
-                    aml::FieldLockRule::NoLock,
-                    aml::FieldUpdateRule::WriteAsZeroes,
-                    vec![
-                        aml::FieldEntry::Named(*b"PCIU", 32),
-                        aml::FieldEntry::Named(*b"PCID", 32),
-                        aml::FieldEntry::Named(*b"B0EJ", 32),
-                        aml::FieldEntry::Named(*b"PSEG", 32),
-                    ],
-                ),
-                &aml::Method::new(
-                    "PCEJ".into(),
-                    2,
-                    true,
-                    vec![
-                        // Take lock defined above
-                        &aml::Acquire::new("BLCK".into(), 0xffff),
-                        // Choose the current segment
-                        &aml::Store::new(&aml::Path::new("PSEG"), &aml::Arg(1)),
-                        // Write PCI bus number (in first argument) to I/O port via field
-                        &aml::ShiftLeft::new(&aml::Path::new("B0EJ"), &aml::ONE, &aml::Arg(0)),
-                        // Release lock
-                        &aml::Release::new("BLCK".into()),
-                        // Return 0
-                        &aml::Return::new(&aml::ZERO),
-                    ],
-                ),
-                &aml::Method::new("PSCN".into(), 0, true, pci_scan_inner),
-            ],
-        )
-        .to_aml_bytes(sink);
-
-        let mbrd_memory_refs = Vec::new();
-
-        aml::Device::new(
-            "_SB_.MBRD".into(),
-            vec![
-                &aml::Name::new("_HID".into(), &aml::EISAName::new("PNP0C02")),
-                &aml::Name::new("_UID".into(), &aml::ZERO),
-                &aml::Name::new("_CRS".into(), &aml::ResourceTemplate::new(mbrd_memory_refs)),
-            ],
-        )
-        .to_aml_bytes(sink);
-
-        // Serial device
-        #[cfg(target_arch = "x86_64")]
-        let serial_irq = 4;
-        #[cfg(target_arch = "aarch64")]
-        let serial_irq =
-            if self.config.lock().unwrap().serial.clone().mode != ConsoleOutputMode::Off {
-                self.get_device_info()
-                    .clone()
-                    .get(&(DeviceType::Serial, DeviceType::Serial.to_string()))
-                    .unwrap()
-                    .irq()
-            } else {
-                // If serial is turned off, add a fake device with invalid irq.
-                31
-            };
-        if self.config.lock().unwrap().serial.mode != ConsoleOutputMode::Off {
-            aml::Device::new(
-                "_SB_.COM1".into(),
-                vec![
-                    &aml::Name::new(
-                        "_HID".into(),
-                        #[cfg(target_arch = "x86_64")]
-                        &aml::EISAName::new("PNP0501"),
-                        #[cfg(target_arch = "aarch64")]
-                        &"ARMH0011",
-                    ),
-                    &aml::Name::new("_UID".into(), &aml::ZERO),
-                    &aml::Name::new("_DDN".into(), &"COM1"),
-                    &aml::Name::new(
-                        "_CRS".into(),
-                        &aml::ResourceTemplate::new(vec![
-                            &aml::Interrupt::new(true, true, false, false, serial_irq),
-                            #[cfg(target_arch = "x86_64")]
-                            &aml::IO::new(0x3f8, 0x3f8, 0, 0x8),
-                            #[cfg(target_arch = "aarch64")]
-                            &aml::Memory32Fixed::new(
-                                true,
-                                arch::layout::LEGACY_SERIAL_MAPPED_IO_START.raw_value() as u32,
-                                MMIO_LEN as u32,
-                            ),
-                        ]),
-                    ),
-                ],
-            )
-            .to_aml_bytes(sink);
-        }
-
-        aml::Name::new("_S5_".into(), &aml::Package::new(vec![&5u8])).to_aml_bytes(sink);
-
-        aml::Device::new(
-            "_SB_.PWRB".into(),
-            vec![
-                &aml::Name::new("_HID".into(), &aml::EISAName::new("PNP0C0C")),
-                &aml::Name::new("_UID".into(), &aml::ZERO),
-            ],
-        )
-        .to_aml_bytes(sink);
-
-        if self.config.lock().unwrap().tpm.is_some() {
-            // Add tpm device
-            TpmDevice {}.to_aml_bytes(sink);
-        }
     }
 }
 

@@ -9,7 +9,6 @@ default = []
 kvm = ["hypervisor/kvm", "vm-device/kvm"]
 
 [dependencies]
-acpi_tables = { git = "https://github.com/rust-vmm/acpi_tables", branch = "main"  }
 anyhow = "1.0.79"
 arch = { path = "../arch" }
 bitflags = "2.4.1"

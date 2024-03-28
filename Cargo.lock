@@ -1634,7 +1634,6 @@ dependencies = [
 name = "vmm"
 version = "0.1.0"
 dependencies = [
- "acpi_tables",
  "anyhow",
  "arch",
  "bitflags 2.4.1",
